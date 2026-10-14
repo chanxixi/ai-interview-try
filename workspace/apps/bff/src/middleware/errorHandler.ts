@@ -2,7 +2,7 @@ import type { Context, Next } from 'koa';
 
 import { AppError } from '../errors/appError';
 import { mapUpstreamError } from '../errors/mapUpstream';
-import { logger } from '../logger';
+import { logger } from '../util/logger';
 import { TRACE_ID_HEADER } from './traceId';
 
 /**

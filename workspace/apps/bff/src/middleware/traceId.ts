@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { Context, Next } from 'koa';
 
-import { logger } from '../logger';
+import { logger } from '../util/logger';
 
 export const TRACE_ID_HEADER = 'X-Trace-Id';
 

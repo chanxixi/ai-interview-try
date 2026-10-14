@@ -2,7 +2,7 @@ import type { Server } from 'node:http';
 
 import { createApp } from './app';
 import { config } from './config';
-import { logger } from './logger';
+import { logger } from './util/logger';
 
 /**
  * BFF 启动入口。
@@ -17,6 +17,7 @@ const server: Server = app.listen(config.port, () => {
       port: config.port,
       envFile: config.envFile,
       jobService: config.jobService,
+      analyzer: config.analyzer,
     },
     'bff listening',
   );
