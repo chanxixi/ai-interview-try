@@ -161,8 +161,9 @@ apps/bff/
 │  ├─ route/
 │  │  └─ index.ts                       # 只做「路径 → controller」接线
 │  ├─ type/
-│  │  ├─ koa.d.ts                       # ctx.state 类型增强
-│  │  └─ result.ts                      # Result<T> / Page<T> 泛型
+│  │  └─ koa.d.ts                       # ctx.state 类型增强
+│  │                                    # （刻意没有 result.ts：成功响应不套壳、
+│  │                                    #   本期不分页 —— Result<T>/Page<T> 是死代码）
 │  └─ util/
 │     ├─ response.ts                    # 统一**错误**响应封装
 │     └─ logger.ts                      # pino 实例 + child
@@ -178,6 +179,18 @@ apps/bff/
 ```
 
 **相对当前骨架的变化**：`routes/` → `controller/` + `route/index.ts`；`clients/` → `client/`；新增 `container.ts` / `dto/` / `service/` / `config/constants.ts` / `type/`；`errors.ts` 拆成 `errors/` 三文件。
+
+**落地状态（P1 完成后回填）**
+
+| 目标态文件 | 状态 | 说明 |
+|---|---|---|
+| `errors/` 三文件、`client/`、`config/`、`util/`、`type/`、`container.ts`、`route/`、`middleware/` | ✅ 已落地 | P1 第 1–7 步，见 `git log --grep P1` |
+| `dto/request/analysis.request.ts`、`dto/response/analysis.response.ts` | ✅ 已落地 | 契约在 `spec.md` §2.1 / §2.2 已冻结，形状可以先写 |
+| `controller/analysis.controller.ts`、`service/analysis.service.ts`、`client/analyzer.client.ts`、`dto/response/job.response.ts` | ⏳ 待 T3 / T4 | **调用链必须跟着功能一起进**，提前建会变成死代码 |
+| `middleware/rateLimit.middleware.ts` | ✅ 已落地但**不挂载** | spec §1.4 Out of Scope，仅保留实现 |
+| `type/result.ts` | ❌ 不建 | 与"成功响应不套壳""本期不分页"直接冲突 |
+
+> 判断标准：**契约形状（DTO）与横切中间件（middleware）可以先行；调用链（client / service / controller）必须跟功能同步进**。
 
 ### 2.2 各层职责与反模式
 
@@ -2769,9 +2782,9 @@ Phase 3  删除 v1，同步更新 contracts/frontend-bff.yaml 与 spec.md §2.1
 
 | 服务 | 当前 | 目标 | 差距 |
 |---|---|---|---|
-| bff | `routes/` + `clients/` + `errors.ts` 单文件 | `controller/` + `service/` + `dto/` + `client/` + `errors/` | 缺 Service 层与 DTO 层 |
-| job-service | `web/`（含 controller 与 filter）+ `dto/` 单文件 + `client/` | `controller/<domain>/` + `service/` + `repository/` + `entity/` + `mapper/` + `exception/` + `web/filter/` | 缺 Service / Repository / Entity / Mapper / 领域 API |
-| analyzer | `routers/` + `models.py` 单文件 | `api/v1/` + `service/` + `schema/{request,response}/` + `core/` + `llm/` | 缺 Service 层、模块拆分、异常与依赖注入 |
+| bff | ~~`routes/` + `clients/` + `errors.ts` 单文件~~ | `controller/` + `service/` + `dto/` + `client/` + `errors/` | ✅ **P1 已完成**（7 提交，21 tests 全绿） |
+| job-service | `web/`（含 controller 与 filter）+ `dto/` 单文件 + `client/` | `controller/<domain>/` + `service/` + `repository/` + `entity/` + `mapper/` + `exception/` + `web/filter/` | 缺 Service / Repository / Entity / Mapper / 领域 API（**P2**） |
+| analyzer | `routers/` + `models.py` 单文件 | `api/v1/` + `service/` + `schema/{request,response}/` + `core/` + `llm/` | 缺 Service 层、模块拆分、异常与依赖注入（**P3**） |
 | web | `api/` + `components/` + `utils/` | 同左（+ `stores/`） | 基本达标 |
 
 ### 7.2 逐文件映射（改造清单）
@@ -2818,11 +2831,23 @@ Phase 3  删除 v1，同步更新 contracts/frontend-bff.yaml 与 spec.md §2.1
 
 | 阶段 | 内容 | 验收 | 提交信息 |
 |---|---|---|---|
-| **P0** | 落地本指南 + 冻结目录约定（不动代码） | `docs/architecture/layered-architecture-guide.md` 存在且被团队确认 | `docs: layered architecture guide (controller/service/dto)` |
-| **P1** | **BFF 分层**：拆 `errors/`、移 `client/`、把 `routes/` 改 `controller/`、新增 `service/` + `dto/` + `container.ts` + `route/index.ts` | `npm run type-check` + `npm test` 全绿；`bash scripts/smoke.sh` 通过 | `refactor(bff): adopt controller/service/dto layering` |
+| **P0** ✅ | 落地本指南 + 冻结目录约定（不动代码） | `docs/architecture/layered-architecture-guide.md` 存在且被团队确认 | `docs: layered architecture guide (controller/service/dto)` |
+| **P1** ✅ | **BFF 分层**：拆 `errors/`、移 `client/`、把 `routes/` 改 `controller/`、新增 `service/` + `dto/` + `container.ts` + `route/index.ts` | `npm run type-check` + `npm test` 全绿；`bash scripts/smoke.sh` 通过 | `refactor(bff): adopt controller/service/dto layering`（实际拆成 7 个提交，见下表） |
 | **P2** | **job-service 分层**：`web/` → `controller/` + `web/filter/`；`dto/` 拆 request/response；补 `exception/`（`ErrorCode` + `BusinessException`）；建 `service/` 骨架 | `mvn test` 通过；`/healthz` 与 `/internal/ping` 行为不变 | `refactor(job-service): layered packages & unified error codes` |
 | **P3** | **analyzer 分层**：`routers/` → `api/v1/`；`models.py` → `schema/`；新增 `service/` 占位 + `core/{exceptions,exception_handlers,trace}.py` + `dependencies.py` | `pytest` 通过；契约形状测试仍绿 | `refactor(analyzer): adopt api/service/schema layering` |
 | **P4** | **接业务与存储**（回到 `tasks.md` 主线）：T3 竖切 → T4 领域 API + 存储降级 → T5 真实算法与 LLM | 按 `tasks.md` 各任务验收 | 见 `tasks.md` 附录 C |
+
+**P1 的实际执行记录（7 个提交，每步都独立可 revert）**
+
+| # | 提交 | 内容 | 验证 |
+|---|---|---|---|
+| 1 | `refactor(bff): split errors.ts and rename clients/ to client/` | `errors.ts` → `errors/{errorCode,appError,mapUpstream}.ts`；`clients/` → `client/` | type-check + 8 tests |
+| 2 | `refactor(bff): split config into config/{env,constants} and move logger to util/` | 常量与运行时配置分离；`logger.ts` → `util/` | type-check + 8 tests + `.env` 路径实测 |
+| 3 | `refactor(bff): introduce dto/ layer and unified error response helper` | 新增 `dto/{request,response}/`；`PingResult` 从 client 提出；`util/response.ts` | type-check + 8 tests |
+| 4 | `refactor(bff): add service/ layer for downstream aggregation` | 聚合逻辑从路由搬进 `service/job.service.ts` | type-check + 8 tests（**用例仍在下游打桩，证明输出逐字一致**） |
+| 5 | `refactor(bff): replace routes/ with controller/ + route/index.ts` | 路由改 class controller；新增唯一接线点 | type-check + 8 tests |
+| 6 | `refactor(bff): add composition root, middleware naming, validate & rateLimit` | `container.ts`；中间件统一 `.middleware.ts`；新增 `validate` / `rateLimit`；挂 `koa-bodyparser` | type-check + 8 tests + **smoke 全链通过** + 响应体逐字核对 |
+| 7 | `test(bff): split tests into unit/e2e and add traceability map to README` | 测试分 `unit/` `e2e/`；新增 13 条用例；README 加**溯源地图** | type-check + **21 tests** + smoke 通过 |
 
 **每阶段 DoD**（对齐 `tasks.md` 附录 B）
 
