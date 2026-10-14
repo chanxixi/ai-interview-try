@@ -1,8 +1,8 @@
 import request from 'supertest';
 
-import { createApp } from '../src/app';
-import type { JobServiceClient } from '../src/client/jobService.client';
-import { containerWithJobServiceClient } from './support/container';
+import { createApp } from '../../src/app';
+import type { JobServiceClient } from '../../src/client/jobService.client';
+import { containerWithJobServiceClient } from '../support/container';
 
 /** 下游永远可用的 stub —— 用例不依赖任何真实服务。 */
 const healthyJobService: JobServiceClient = {
@@ -22,8 +22,8 @@ const healthyJobService: JobServiceClient = {
   }),
 };
 
-describe('BFF 骨架', () => {
-  it('GET /healthz 返回统一健康结构（spec.md §2.8）', async () => {
+describe('e2e · GET /healthz', () => {
+  it('返回统一健康结构（spec.md §2.8）', async () => {
     const response = await request(
       createApp(containerWithJobServiceClient(healthyJobService)).callback(),
     ).get('/healthz');

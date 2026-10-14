@@ -1,10 +1,10 @@
 import request from 'supertest';
 
-import { createApp } from '../src/app';
-import type { JobServiceClient } from '../src/client/jobService.client';
-import type { PingResult } from '../src/dto/response/ping.response';
-import { AppError } from '../src/errors/appError';
-import { containerWithJobServiceClient } from './support/container';
+import { createApp } from '../../src/app';
+import type { JobServiceClient } from '../../src/client/jobService.client';
+import type { PingResult } from '../../src/dto/response/ping.response';
+import { AppError } from '../../src/errors/appError';
+import { containerWithJobServiceClient } from '../support/container';
 
 const HEALTHY_CHAIN: PingResult = {
   service: 'job-service',
@@ -29,7 +29,7 @@ function appWith(jobService: JobServiceClient) {
   return createApp(containerWithJobServiceClient(jobService)).callback();
 }
 
-describe('GET /api/ping —— 全链连通性探针', () => {
+describe('e2e · GET /api/ping —— 全链连通性探针', () => {
   it('返回 Vue → BFF → job-service → analyzer 三跳结构', async () => {
     const response = await request(appWith(healthyJobService)).get('/api/ping');
 
