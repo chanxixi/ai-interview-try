@@ -1,11 +1,12 @@
 import Koa from 'koa';
 
 import { createJobServiceClient, type JobServiceClient } from './client/jobService.client';
+import { HealthController } from './controller/health.controller';
+import { JobController } from './controller/job.controller';
 import { errorHandlerMiddleware } from './middleware/errorHandler';
 import { requestLogMiddleware } from './middleware/requestLog';
 import { traceIdMiddleware } from './middleware/traceId';
-import { healthRouter } from './routes/health';
-import { createPingRouter } from './routes/ping';
+import { createApiRouter } from './route';
 import { createJobService } from './service/job.service';
 
 export interface AppDeps {
@@ -16,10 +17,10 @@ export interface AppDeps {
 /**
  * 组装 Koa app（与监听分离，便于测试直接喂 app.callback()）。
  *
- * 中间件顺序（洋葱模型）：
+ * 中间件顺序（洋葱模型，不可调换）：
  *   errorHandler（最外层，兜住一切）→ traceId → 访问日志 → 路由
  *
- * ⚠️ 本函数里的 new / 装配在 P1 第 6 步会整体搬到 `container.ts`（组合根）。
+ * ⚠️ 本函数里的装配在 P1 第 6 步会整体搬到 `container.ts`（组合根）。
  */
 export function createApp(deps: AppDeps = { jobService: createJobServiceClient() }): Koa {
   const app = new Koa();
@@ -33,9 +34,11 @@ export function createApp(deps: AppDeps = { jobService: createJobServiceClient()
 
   const jobService = createJobService({ jobService: deps.jobService });
 
-  app.use(healthRouter.routes()).use(healthRouter.allowedMethods());
-  const pingRouter = createPingRouter({ jobService });
-  app.use(pingRouter.routes()).use(pingRouter.allowedMethods());
+  const router = createApiRouter({
+    health: new HealthController(),
+    job: new JobController(jobService),
+  });
+  app.use(router.routes()).use(router.allowedMethods());
 
   return app;
 }
