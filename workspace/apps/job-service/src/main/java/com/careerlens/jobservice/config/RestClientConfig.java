@@ -1,5 +1,6 @@
 package com.careerlens.jobservice.config;
 
+import com.careerlens.jobservice.config.properties.AppProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;

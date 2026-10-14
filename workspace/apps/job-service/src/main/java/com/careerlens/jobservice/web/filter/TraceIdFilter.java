@@ -1,4 +1,4 @@
-package com.careerlens.jobservice.web;
+package com.careerlens.jobservice.web.filter;
 
 import com.careerlens.jobservice.config.constants.TraceConstants;
 import jakarta.servlet.Filter;
@@ -23,9 +23,13 @@ import org.springframework.stereotype.Component;
  *
  * <p><b>为什么是 Filter 而不是 Interceptor</b>：Filter 在 Servlet 层，能覆盖到
  * 静态资源、错误转发等 Interceptor 触达不到的路径，且 {@code @Order(HIGHEST_PRECEDENCE)}
- * 保证它是第一个写 MDC 的组件 —— 后续任何日志（含异常收口）都带得上 traceId。
+ * 保证它是第一个写 MDC 的组件 —— 后续任何日志（含 {@code exception/GlobalExceptionHandler}
+ * 输出的错误日志）都带得上 traceId。
  *
  * <p><b>header 名与 MDC key 的唯一来源</b>：{@link TraceConstants}（此处不重复定义）。
+ *
+ * <p><b>为什么在 web/filter/ 子包</b>：{@code web/} 下未来会加 Interceptor、
+ * 参数解析器等 Servlet 层组件；过滤器只是其中一类，分包后 {@code web/} 根不再堆文件。
  */
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE)
