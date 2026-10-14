@@ -7,6 +7,8 @@ package com.careerlens.jobservice.dto.response;
  *
  * <ol>
  *   <li>{@code Map.of} 是无序的，字段顺序每次运行可能不同，日志与快照测试不稳定；
+ *       本 record 的字段顺序刻意与重构前的实际输出保持一致（{@code service} 在前），
+ *       让「重构前后逐字一致」可以用 diff 直接证明；
  *   <li>形状写死在代码里，改字段时编译期即可发现调用方，不用满仓库 grep 字面量 key。
  * </ol>
  *
@@ -16,10 +18,10 @@ package com.careerlens.jobservice.dto.response;
  *
  * <p><b>唯一构造方</b>：{@code controller.health.HealthController}（P2-4 起经 service 层）。
  */
-public record HealthResponse(String status, String service) {
+public record HealthResponse(String service, String status) {
 
     /** 固定文案 "ok"，避免各处手写字符串拼错（探针类接口对字面量一致性敏感）。 */
     public static HealthResponse ok(String service) {
-        return new HealthResponse("ok", service);
+        return new HealthResponse(service, "ok");
     }
 }
