@@ -1,7 +1,7 @@
 import request from 'supertest';
 
 import { createApp } from '../src/app';
-import type { JobServiceClient } from '../src/clients/jobServiceClient';
+import type { JobServiceClient } from '../src/client/jobService.client';
 
 /** 下游永远可用的 stub —— 用例不依赖任何真实服务。 */
 const healthyJobService: JobServiceClient = {

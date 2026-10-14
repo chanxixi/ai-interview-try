@@ -1,6 +1,6 @@
 import Router from '@koa/router';
 
-import type { JobServiceClient, PingResult } from '../clients/jobServiceClient';
+import type { JobServiceClient, PingResult } from '../client/jobService.client';
 import { config } from '../config';
 
 export interface PingRouteDeps {

@@ -1,8 +1,8 @@
 import request from 'supertest';
 
 import { createApp } from '../src/app';
-import type { JobServiceClient, PingResult } from '../src/clients/jobServiceClient';
-import { AppError } from '../src/errors';
+import type { JobServiceClient, PingResult } from '../src/client/jobService.client';
+import { AppError } from '../src/errors/appError';
 
 const HEALTHY_CHAIN: PingResult = {
   service: 'job-service',

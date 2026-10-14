@@ -1,4 +1,4 @@
-import { UpstreamStatusError, UpstreamTransportError } from '../errors';
+import { UpstreamStatusError, UpstreamTransportError } from '../errors/appError';
 
 /**
  * 下游 HTTP 调用封装。

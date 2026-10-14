@@ -1,6 +1,6 @@
 import Koa from 'koa';
 
-import { createJobServiceClient, type JobServiceClient } from './clients/jobServiceClient';
+import { createJobServiceClient, type JobServiceClient } from './client/jobService.client';
 import { errorHandlerMiddleware } from './middleware/errorHandler';
 import { requestLogMiddleware } from './middleware/requestLog';
 import { traceIdMiddleware } from './middleware/traceId';
