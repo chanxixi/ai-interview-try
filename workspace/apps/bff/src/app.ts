@@ -6,9 +6,10 @@ import { requestLogMiddleware } from './middleware/requestLog';
 import { traceIdMiddleware } from './middleware/traceId';
 import { healthRouter } from './routes/health';
 import { createPingRouter } from './routes/ping';
+import { createJobService } from './service/job.service';
 
 export interface AppDeps {
-  /** 下游客户端；测试时注入 stub，避免依赖真实服务 */
+  /** 下游适配器；测试时注入 stub，避免依赖真实服务 */
   jobService: JobServiceClient;
 }
 
@@ -17,6 +18,8 @@ export interface AppDeps {
  *
  * 中间件顺序（洋葱模型）：
  *   errorHandler（最外层，兜住一切）→ traceId → 访问日志 → 路由
+ *
+ * ⚠️ 本函数里的 new / 装配在 P1 第 6 步会整体搬到 `container.ts`（组合根）。
  */
 export function createApp(deps: AppDeps = { jobService: createJobServiceClient() }): Koa {
   const app = new Koa();
@@ -28,8 +31,10 @@ export function createApp(deps: AppDeps = { jobService: createJobServiceClient()
   app.use(traceIdMiddleware);
   app.use(requestLogMiddleware);
 
+  const jobService = createJobService({ jobService: deps.jobService });
+
   app.use(healthRouter.routes()).use(healthRouter.allowedMethods());
-  const pingRouter = createPingRouter(deps);
+  const pingRouter = createPingRouter({ jobService });
   app.use(pingRouter.routes()).use(pingRouter.allowedMethods());
 
   return app;

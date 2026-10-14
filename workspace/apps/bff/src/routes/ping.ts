@@ -1,11 +1,9 @@
 import Router from '@koa/router';
 
-import type { JobServiceClient } from '../client/jobService.client';
-import { config } from '../config';
-import type { PingResult } from '../dto/response/ping.response';
+import type { JobService } from '../service/job.service';
 
 export interface PingRouteDeps {
-  jobService: JobServiceClient;
+  jobService: JobService;
 }
 
 /**
@@ -13,31 +11,17 @@ export interface PingRouteDeps {
  *
  * 链路：Vue → **BFF** → job-service → analyzer
  *
- * BFF 在这里只做两件事：透传 traceId、把下游结果原样聚合给前端。
- * **不承载业务规则**（ADR-005），因此本路由没有任何领域判断。
+ * 路由层只做「路径 → 处理函数」接线，聚合逻辑在 `service/job.service.ts`。
+ * 下游不可用时异常上抛，由 errorHandler 统一映射为 503 / 504（plan.md §6.4）。
  *
- * 下游不可用时抛错，由 errorHandler 统一映射为 503 / 504（plan.md §6.4）。
- *
- * ⚠️ 本文件在 P1 之后会被 `controller/job.controller.ts` + `route/index.ts` 取代。
+ * ⚠️ 本文件在 P1 第 5 步会被 `controller/job.controller.ts` + `route/index.ts` 取代。
  */
 export function createPingRouter(deps: PingRouteDeps): Router {
   const router = new Router();
 
   router.get('/api/ping', async (ctx) => {
-    const { traceId } = ctx.state;
     ctx.state.log.info('ping received');
-
-    const downstream = await deps.jobService.ping(traceId);
-
-    const body: PingResult = {
-      service: config.serviceName,
-      status: 'ok',
-      version: config.version,
-      runtime: `node ${process.version}`,
-      traceId,
-      downstream,
-    };
-    ctx.body = body;
+    ctx.body = await deps.jobService.ping(ctx.state.traceId);
   });
 
   return router;
