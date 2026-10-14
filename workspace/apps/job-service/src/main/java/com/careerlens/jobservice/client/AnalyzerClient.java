@@ -1,18 +1,26 @@
 package com.careerlens.jobservice.client;
 
-import com.careerlens.jobservice.dto.PingResponse;
+import com.careerlens.jobservice.config.constants.TraceConstants;
+import com.careerlens.jobservice.dto.response.AnalyzerPingResponse;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
 /**
- * analyzer 下游客户端。
+ * analyzer 下游客户端（<b>出站适配器</b>）。
  *
- * <p>链路位置：job-service → analyzer。本层只做调用与编排，不做文本算法（spec.md §2.6）。
+ * <p><b>职责边界</b>：只做「把请求发出去、把响应拿回来」。
+ * 不做文本算法、不做降级决策、不做业务判断（spec.md §2.6）——
+ * 降级与容错由 service 层决定（见 {@code service.InternalService}）。
+ *
+ * <p><b>超时</b>：由 {@code config.RestClientConfig} 在装配期统一设置
+ * （spec.md §3.3 禁止无超时的外部调用）。
+ *
+ * <p><b>traceId</b>：必须透传，否则全链日志无法按 traceId 串起来（spec.md §2.8）。
+ *
+ * <p><b>唯一调用方</b>：{@code service} 层。
  */
 @Component
 public class AnalyzerClient {
-
-    private static final String TRACE_ID_HEADER = "X-Trace-Id";
 
     private final RestClient restClient;
 
@@ -21,11 +29,11 @@ public class AnalyzerClient {
     }
 
     /** 连通性探针，透传 traceId 以验证全链贯穿。 */
-    public PingResponse ping(String traceId) {
+    public AnalyzerPingResponse ping(String traceId) {
         return restClient.get()
                 .uri("/internal/ping")
-                .header(TRACE_ID_HEADER, traceId)
+                .header(TraceConstants.TRACE_ID_HEADER, traceId)
                 .retrieve()
-                .body(PingResponse.class);
+                .body(AnalyzerPingResponse.class);
     }
 }

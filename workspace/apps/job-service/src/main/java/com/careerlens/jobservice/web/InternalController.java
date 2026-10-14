@@ -1,7 +1,8 @@
 package com.careerlens.jobservice.web;
 
 import com.careerlens.jobservice.client.AnalyzerClient;
-import com.careerlens.jobservice.dto.PingResponse;
+import com.careerlens.jobservice.config.constants.TraceConstants;
+import com.careerlens.jobservice.dto.response.AnalyzerPingResponse;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.slf4j.Logger;
@@ -38,7 +39,7 @@ public class InternalController {
 
     @GetMapping("/ping")
     public Map<String, Object> ping() {
-        String traceId = MDC.get(TraceIdFilter.MDC_KEY);
+        String traceId = MDC.get(TraceConstants.MDC_KEY);
         log.info("ping received");
 
         Map<String, Object> result = new LinkedHashMap<>();
@@ -59,7 +60,7 @@ public class InternalController {
         Map<String, Object> downstream = new LinkedHashMap<>();
         downstream.put("service", "analyzer");
         try {
-            PingResponse response = analyzerClient.ping(traceId);
+            AnalyzerPingResponse response = analyzerClient.ping(traceId);
             downstream.put("status", "ok");
             downstream.put("version", response.version());
             downstream.put("runtime", response.runtime());
