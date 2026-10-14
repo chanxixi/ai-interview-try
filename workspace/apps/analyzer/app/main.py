@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.core.config import settings
+from app.core.exception_handlers import register_exception_handlers
 from app.core.logging import setup_logging
 from app.core.trace import TraceIdMiddleware
 from app.routers import health, internal
@@ -35,6 +36,9 @@ app = FastAPI(
     description="文本清洗 / 技能归一化 / 匹配分析（骨架阶段）",
     lifespan=lifespan,
 )
+
+# 统一错误收口：所有异常出口都变成 {code, message, traceId}（spec.md §2.3）
+register_exception_handlers(app)
 
 # 横切：traceId 必须在所有路由之前挂上，否则日志拿不到 traceId（spec.md §2.8）
 app.add_middleware(TraceIdMiddleware)
