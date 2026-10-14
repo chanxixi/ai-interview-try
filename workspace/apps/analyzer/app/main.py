@@ -12,11 +12,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.api.v1 import health, internal
 from app.core.config import settings
 from app.core.exception_handlers import register_exception_handlers
 from app.core.logging import setup_logging
 from app.core.trace import TraceIdMiddleware
-from app.routers import health, internal
 
 setup_logging(settings.log_level)
 
