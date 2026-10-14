@@ -1,30 +1,26 @@
 import { config } from '../config';
+import type { PingResult } from '../dto/response/ping.response';
 import { requestJson } from './http';
 
 /**
- * 下游连通性探针响应。
+ * job-service（Java / Spring Boot）适配器。
  *
- * job-service 与 analyzer 的 `/ping` 形状一致，因此共用同一类型：
- * 每一跳回显自己的 `service` / `runtime` / `traceId`，并把自己下游的结果挂在 `downstream`。
+ * 只做一件事：一次下游调用 + 超时 + traceId 透传 + 错误归一。
+ * **不解读业务字段**（"这是不是有效岗位"由 Service 判断），**不做重试**（本期不需要）。
+ *
+ * ⚠️ BFF 没有 repository / entity —— 数据访问权只属于 Java 层（spec.md §2.6 / §3.1）。
+ *    本文件是全项目唯一允许出现 `job-service` baseUrl 的地方。
+ *
+ * T3 起本适配器会补齐 `listJobs` / `getJob`（契约见 contracts/bff-java.yaml）。
  */
-export interface PingResult {
-  service: string;
-  status: 'ok' | 'down';
-  version?: string;
-  runtime?: string;
-  traceId?: string | null;
-  error?: string;
-  downstream?: PingResult;
-}
-
-/** job-service 领域 API 客户端（骨架阶段只暴露探针）。 */
 export interface JobServiceClient {
+  /** 全链连通性探针，返回 job-service 及其下游（analyzer）的结果 */
   ping(traceId: string): Promise<PingResult>;
 }
 
 export function createJobServiceClient(): JobServiceClient {
   return {
-    async ping(traceId: string): Promise<PingResult> {
+    ping(traceId: string): Promise<PingResult> {
       return requestJson<PingResult>({
         service: 'job-service',
         url: `${config.jobService.baseUrl}/internal/ping`,

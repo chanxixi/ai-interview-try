@@ -1,9 +1,10 @@
 import type { Context, Next } from 'koa';
 
+import { TRACE_ID_HEADER } from '../config/constants';
 import { AppError } from '../errors/appError';
 import { mapUpstreamError } from '../errors/mapUpstream';
 import { logger } from '../util/logger';
-import { TRACE_ID_HEADER } from './traceId';
+import { toErrorResponse } from '../util/response';
 
 /**
  * 统一错误收口（spec.md §2.3）。
@@ -13,6 +14,8 @@ import { TRACE_ID_HEADER } from './traceId';
  * - 响应体固定 `{ code, message, traceId }`，**不透传下游原始错误栈**（spec.md §3.3）
  *
  * 必须是最外层中间件，才能兜住后面所有中间件与路由抛出的异常。
+ *
+ * 溯源：想知道"某个下游报错时前端看到什么"，读 `errors/mapUpstream.ts`，不要读 controller。
  */
 export async function errorHandlerMiddleware(ctx: Context, next: Next): Promise<void> {
   try {
@@ -30,10 +33,6 @@ export async function errorHandlerMiddleware(ctx: Context, next: Next): Promise<
     }
 
     ctx.status = appError.status;
-    ctx.body = {
-      code: appError.code,
-      message: appError.message,
-      traceId,
-    };
+    ctx.body = toErrorResponse(appError, traceId);
   }
 }
