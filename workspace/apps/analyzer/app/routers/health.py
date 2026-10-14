@@ -3,7 +3,7 @@
 from fastapi import APIRouter
 
 from app.core.config import settings
-from app.models import HealthResponse
+from app.schema.response.health_response import HealthResponse
 
 router = APIRouter(tags=["health"])
 

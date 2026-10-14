@@ -1,4 +1,4 @@
-"""响应模型 —— 与 spec.md §2.2 的**冻结契约**逐字对应。
+"""分析响应 —— 与 spec.md §2.2 的**冻结契约**逐字对应。
 
 字段名、层级、类型不可改；变更须走 spec.md 的《变更记录》并同步 OpenAPI 契约。
 骨架阶段只定义形状，真实数据由 tasks.md T5 填充。
@@ -7,26 +7,6 @@
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
-
-# ---------------------------------------------------------------- 健康与探针
-
-
-class HealthResponse(BaseModel):
-    status: Literal["ok"] = "ok"
-    service: str
-
-
-class PingResponse(BaseModel):
-    """连通性探针响应：证明本服务可达，并回显 traceId 以验证全链贯穿。"""
-
-    service: str
-    status: Literal["ok"] = "ok"
-    version: str
-    runtime: str
-    traceId: Optional[str] = None
-
-
-# ---------------------------------------------------------------- 冻结契约（spec.md §2.2）
 
 IssueType = Literal[
     "NO_QUANTIFY",
@@ -40,12 +20,16 @@ Importance = Literal["required", "preferred"]
 
 
 class NormalizedSkill(BaseModel):
+    """归一化后的技能：`raw` 保留原文，`canonical` 是标准词（AC6）。"""
+
     raw: str
     canonical: str
     category: Optional[str] = None
 
 
 class ResumeView(BaseModel):
+    """简历视图 —— 四类小节 + 归一化技能列表。"""
+
     sections: dict[str, list[str]] = Field(
         default_factory=lambda: {
             "education": [],
@@ -58,7 +42,7 @@ class ResumeView(BaseModel):
 
 
 class Issue(BaseModel):
-    """对简历**本身**的诊断，与 JD 无关（spec.md §2.9）。"""
+    """对简历**本身**的诊断，与 JD 无关（spec.md §2.10）。"""
 
     type: IssueType
     severity: Severity
@@ -79,12 +63,16 @@ class MatchedItem(BaseModel):
 
 
 class MissingItem(BaseModel):
+    """缺口项 —— 必须给出可执行建议，不能只列技能名（AC7）。"""
+
     skill: str
     importance: Importance
     suggestion: str
 
 
 class MatchResult(BaseModel):
+    """匹配结果：`matched ∩ missing = ∅` 且并集 = JD 技能全集（spec.md §2.4）。"""
+
     score: int
     matched: list[MatchedItem] = Field(default_factory=list)
     missing: list[MissingItem] = Field(default_factory=list)
@@ -99,13 +87,9 @@ class Meta(BaseModel):
     elapsedMs: int = 0
 
 
-class AnalyzeRequest(BaseModel):
-    resumeText: str
-    jdText: str
-    traceId: Optional[str] = None
-
-
 class AnalyzeResponse(BaseModel):
+    """spec.md §2.2 响应契约（冻结）：字段名 / 层级 / 类型不可改。"""
+
     resume: ResumeView
     issues: list[Issue] = Field(default_factory=list)
     match: MatchResult

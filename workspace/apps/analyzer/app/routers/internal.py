@@ -12,14 +12,15 @@ from typing import Optional
 from fastapi import APIRouter, Header
 
 from app.core.config import settings
-from app.models import (
-    AnalyzeRequest,
+from app.core.constants import TRACE_ID_HEADER
+from app.schema.request.analyze_request import AnalyzeRequest
+from app.schema.response.analyze_response import (
     AnalyzeResponse,
     MatchResult,
     Meta,
-    PingResponse,
     ResumeView,
 )
+from app.schema.response.health_response import PingResponse
 
 router = APIRouter(tags=["internal"])
 logger = logging.getLogger(__name__)
@@ -27,10 +28,10 @@ logger = logging.getLogger(__name__)
 
 @router.get("/ping", response_model=PingResponse)
 async def ping(
-    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+    x_trace_id: Optional[str] = Header(default=None, alias=TRACE_ID_HEADER),
 ) -> PingResponse:
     """连通性探针：回显 traceId，用于验证全链贯穿（spec.md §2.8）。"""
-    logger.info("ping received", extra={"trace_id": x_trace_id})
+    logger.info("ping received")
     return PingResponse(
         service=settings.service_name,
         version=settings.version,
@@ -53,7 +54,6 @@ async def analyze(payload: AnalyzeRequest) -> AnalyzeResponse:
         "analyze stub called (resume=%d chars, jd=%d chars)",
         len(payload.resumeText),
         len(payload.jdText),
-        extra={"trace_id": trace_id},
     )
 
     # TODO(T5)：清洗 → 归一化 → 匹配打分 → LLM 增强（失败则保持 degraded=True）
