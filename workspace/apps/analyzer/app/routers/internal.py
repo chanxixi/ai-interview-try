@@ -11,7 +11,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Header
 
-from app.config import settings
+from app.core.config import settings
 from app.models import (
     AnalyzeRequest,
     AnalyzeResponse,
