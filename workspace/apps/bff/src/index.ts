@@ -2,14 +2,17 @@ import type { Server } from 'node:http';
 
 import { createApp } from './app';
 import { config } from './config';
+import { buildContainer } from './container';
 import { logger } from './util/logger';
 
 /**
  * BFF 启动入口。
  *
- * 只负责监听与优雅退出；请求处理逻辑全部在 app.ts 里，便于测试。
+ * 只负责三件事：建容器 → 监听 → 优雅退出。
+ * 请求处理逻辑全部在 app.ts / controller / service 里，便于测试。
  */
-const app = createApp();
+const container = buildContainer();
+const app = createApp(container);
 
 const server: Server = app.listen(config.port, () => {
   logger.info(

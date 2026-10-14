@@ -4,6 +4,7 @@ import { createApp } from '../src/app';
 import type { JobServiceClient } from '../src/client/jobService.client';
 import type { PingResult } from '../src/dto/response/ping.response';
 import { AppError } from '../src/errors/appError';
+import { containerWithJobServiceClient } from './support/container';
 
 const HEALTHY_CHAIN: PingResult = {
   service: 'job-service',
@@ -25,7 +26,7 @@ const healthyJobService: JobServiceClient = {
 };
 
 function appWith(jobService: JobServiceClient) {
-  return createApp({ jobService }).callback();
+  return createApp(containerWithJobServiceClient(jobService)).callback();
 }
 
 describe('GET /api/ping —— 全链连通性探针', () => {
