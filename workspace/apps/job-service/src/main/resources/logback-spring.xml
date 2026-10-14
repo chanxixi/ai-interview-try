@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  结构化 JSON 日志（spec.md §2.8）。
+  输出含 @timestamp / level / message / logger_name / traceId / service，便于按 traceId 全链 grep。
+-->
+<configuration>
+
+    <appender name="JSON" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <includeMdc>true</includeMdc>
+            <customFields>{"service":"job-service"}</customFields>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="JSON"/>
+    </root>
+
+</configuration>

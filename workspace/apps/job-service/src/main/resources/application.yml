@@ -1,0 +1,20 @@
+server:
+  port: ${JOB_SERVICE_PORT:8080}
+  shutdown: graceful
+
+spring:
+  application:
+    name: job-service
+
+careerlens:
+  version: 0.1.0
+  analyzer:
+    # 链路位置：job-service → analyzer
+    base-url: ${ANALYZER_URL:http://localhost:8000}
+    # 超时矩阵见 plan.md §6.1
+    timeout-ms: ${ANALYZER_TIMEOUT_MS:45000}
+
+logging:
+  level:
+    root: ${LOG_LEVEL:INFO}
+    com.careerlens: ${LOG_LEVEL:INFO}

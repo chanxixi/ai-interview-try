@@ -1,0 +1,28 @@
+# ============================================================
+# 换行符与二进制文件约定
+#
+# 仓库内文本一律存 LF：Windows 开发 + Linux 容器运行，
+# 不统一的话每次跨平台提交都会产生整文件的假 diff。
+# ============================================================
+
+* text=auto eol=lf
+
+# ---- 二进制（不做换行符转换）----
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.jar binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.zip binary
+
+# ---- Shell 脚本必须保持 LF，否则容器内会报 bad interpreter ----
+*.sh text eol=lf
+
+# ---- Windows 批处理必须保持 CRLF ----
+*.bat text eol=crlf
+*.cmd text eol=crlf

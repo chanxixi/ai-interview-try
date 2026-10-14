@@ -1,0 +1,23 @@
+{
+  "name": "@careerlens/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "CareerLens 前端 —— 只负责呈现与交互，不做业务判断，不直连 Java / Python",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "type-check": "vue-tsc --noEmit"
+  },
+  "dependencies": {
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11",
+    "vue-tsc": "^2.1.10"
+  }
+}
