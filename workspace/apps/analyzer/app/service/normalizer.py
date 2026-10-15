@@ -50,19 +50,18 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
-import yaml
-
 from app.core.constants import (
     FUZZY_MATCH_THRESHOLD,
     FUZZY_MIN_LENGTH,
     MIN_SCAN_ALIAS_LENGTH,
 )
+from app.core.resources import read_yaml, resource_path
 from app.service.cleaner import unify_width
 
-#: 词典真源位置。**按 `__file__` 定位而不是按 CWD** —— 与 `config.py` 的 `.env` 相反：
-#: `.env` 是部署配置，跟着进程工作目录走；词典是仓库产物，跟着代码走。
-#: 否则从别的目录启动 uvicorn 时，词典会静默加载失败。
-DICTIONARY_PATH = Path(__file__).resolve().parents[1] / "data" / "skills.yaml"
+#: 词典文件名。**路径拼接与 YAML 读取统一在 `core/resources.py`**（指南 §4.1）——
+#: 本文件只负责「把 dict 解释成 `SkillDictionary`」。
+#: 真源在仓库（C4）：随代码分发的只读资源，按 `__file__` 定位而不是按 CWD。
+DICTIONARY_NAME = "skills.yaml"
 
 #: 折叠时要**删掉**的字符：各类空白 + 连接符。
 #: 为什么删 `.` / `-` / `_` / `\\` / `/`：让 `Node.js`≡`NodeJS`、`nest.js`≡`NestJS`、
@@ -259,13 +258,13 @@ class SkillDictionary:
         """从 `skills.yaml` 加载。文件缺失 / 结构不对都**立刻炸**，不静默返回空词典 ——
         空词典会让所有技能都变 `unknown`，表现为「匹配度全是 0」这种最难查的假故障。
         """
-        target = Path(path) if path is not None else DICTIONARY_PATH
+        target = Path(path) if path is not None else resource_path(DICTIONARY_NAME)
+        # 先给**领域化**文案（比「资源不存在」更能指路），再交给统一读取点做
+        # 「顶层必须是 mapping」这类通用校验。
         if not target.is_file():
             raise FileNotFoundError(f"技能词典不存在：{target}")
 
-        raw = yaml.safe_load(target.read_text(encoding="utf-8"))
-        if not isinstance(raw, dict):
-            raise ValueError(f"技能词典顶层必须是 mapping：{target}")
+        raw = read_yaml(target)
 
         declared = raw.get("categories") or []
         if not isinstance(declared, list) or not declared:

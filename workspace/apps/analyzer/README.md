@@ -38,9 +38,10 @@ app/
 ├─ schema/                              ④ DTO：契约形状的唯一落点
 │  ├─ request/analyze_request.py
 │  └─ response/{analyze,error,health}_response.py
-├─ core/                                横切：配置 / 常量 / 日志 / 追踪 / 异常 / 装配
+├─ core/                                横切：配置 / 常量 / 资源 / 日志 / 追踪 / 异常 / 装配
 │  ├─ config.py                         可被环境覆盖的值（端口、密钥）
 │  ├─ constants.py                      永不随环境变化的值（长度上限、权重、header 名）
+│  ├─ resources.py                      ★ `app/data/*.yaml` 的唯一读取点（路径 + 解析 + 顶层校验）
 │  ├─ trace.py                          ★ ContextVar + TraceIdMiddleware
 │  ├─ logging.py                        结构化 JSON，traceId 自动注入
 │  ├─ exceptions.py                     ErrorCode + AppException
@@ -64,6 +65,7 @@ app/
 | 错误响应里出现了堆栈 / 异常类名 | `core/exception_handlers.py` | `util/response.py` |
 | 响应字段名/层级变了，前端解析失败 | `schema/response/analyze_response.py` | ⚠️ 这是 spec.md §2.2 冻结契约 |
 | 想改长度上限 / 打分权重 | `core/constants.py` | 同步 `spec.md` §2.1 / ADR-002 + 契约 |
+| 词典认不出某个技能 / 要加一个数据文件 | `app/data/skills.yaml` | `core/resources.py`（路径拼接与 YAML 读取的**唯一**落点） |
 | 日志里 traceId 断了或串号 | `core/trace.py` | `core/logging.py`（从 contextvar 自动取） |
 | 想改 traceId 的 header 名 | `core/constants.py` `TRACE_ID_HEADER` | ⚠️ 三个服务必须同时改（spec.md §2.8 冻结） |
 | 某条 URL 由谁处理 | `api/v1/` 下按路径找 | `main.py` 的 `include_router` |
@@ -87,6 +89,7 @@ app/
 | 改响应字段 | `schema/response/` **+ 先改 `spec.md` §2.2** | 冻结契约，改它等于改三份 OpenAPI |
 | 加一个算法步骤 | `service/` 下新建纯函数模块 | 不要在 `schema/` 的 validator 里做计算 |
 | 加配置项 | `core/config.py` + 仓库根 `.env.example` | 两处必须同步 |
+| 加一个数据资源文件（YAML） | `app/data/<name>.yaml` + 用 `core/resources.py` 的 `resource_path` / `read_yaml` 读 | **路径拼接只允许出现在 `core/resources.py` 一处**；`core` 不得 import `service`，所以「解释成领域对象」留在各自 service |
 | 换日志格式 | `core/logging.py` | traceId 来源别改成手写参数（会漏） |
 | 引入 LLM（T5） | `llm/` 新建 + `service/` 编排 + `core/dependencies.py` 装配 | 不要在 `api/` 里直接调 LLM |
 | 加一种文档格式 | 新建 `service/<fmt>_parser.py` + `parser_plugin.py` 注册一行 | 不要改 `cleaner.py`（清洗与格式无关）；入口白名单在 **BFF**，不在本服务 |
