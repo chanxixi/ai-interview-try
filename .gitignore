@@ -64,6 +64,8 @@ logs/
 .DS_Store
 Thumbs.db
 desktop.ini
+# Git Bash 崩溃时在**当前目录**丢下的转储文件（本项目全程在 Git Bash 下开发，见过）
+*.stackdump
 
 # ---- 本地数据 / 临时文件 ----
 *.sqlite
@@ -71,3 +73,11 @@ desktop.ini
 *.h2.db
 tmp/
 temp/
+
+# ---- 编辑 / 补丁的残留物 ----
+# `patch` 失败、手工解冲突、或 IDE 生成备份时留下的伴生文件。
+# 它们**不含任何有价值内容**，但很容易被 `git add .` 顺手带进仓库 ——
+# 而一旦入库，评审者会以为是正式文件。
+*.orig
+*.rej
+*.bak

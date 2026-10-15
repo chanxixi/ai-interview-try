@@ -1,0 +1,255 @@
+# ============================================================================
+# CI —— 四层各跑自己的 lint / type-check / test / build（tasks.md M8.4）
+#
+# 设计原则（与 part2 plan §9 的「CI 增量」表一一对应）：
+#   ① **四层互不依赖**，并行跑 —— 某一层红了不该拖住其它层的反馈；
+#   ② **不连外部服务**：analyzer 的 LLM 有降级、job-service 用内嵌 H2、
+#      BFF 的下游调用在用例里被替换成 stub —— 所以 CI 里不需要 MySQL / Redis / 真 LLM；
+#   ③ **契约级门禁单独一个 job**：它最快，先失败先反馈，
+#      且它守的是「结构性约束」（不落盘 / 唯一职责文件 / 分层不越界），
+#      这类约束一旦破了，后面四层的测试反而可能全绿。
+#
+# 与 part1 T8.1 的关系：T8.1 要的是「matrix 跑 4 层」，本文件就是它；
+# M8.4 在此之上把 part2 新增的用例（流式 / 匹配 / 种子）点名跑一遍，
+# 这样「part2 的关键回归」在 CI 里是**显式可见**的，而不是混在几百个用例里。
+# ============================================================================
+
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+# 只读权限：CI 不写仓库（提交门禁要求所有 commit 由人工执行）
+permissions:
+  contents: read
+
+# 同一分支连推时取消上一轮，省 runner
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ==========================================================================
+  # 0. 契约与门禁 —— 最快，先跑
+  # ==========================================================================
+  contracts:
+    name: 契约与门禁
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: 安装校验依赖（gen_seed.py 需要 PyYAML 读 skills.yaml）
+        run: python -m pip install --quiet PyYAML==6.0.3
+
+      - name: 种子源校验（--check 只校验、不落盘）
+        working-directory: workspace
+        run: bash scripts/gen-seed.sh --check
+
+      # 门禁①：apps/ 下不得出现任何简历样本（上传一律不落盘，ADR-110）
+      - name: 门禁① apps/ 下无样本文件
+        working-directory: workspace
+        run: |
+          n=$(find apps -type f \( -iname '*.pdf' -o -iname '*.docx' -o -iname '*.doc' \) \
+                -not -path '*/.venv/*' | wc -l)
+          echo "apps/ 下的样本文件数：$n（期望 0）"
+          test "$n" -eq 0
+
+      # 门禁②：只有 pdf_parser.py 能 import pypdf（plan §7「唯一职责文件」）
+      #   这条约束的意图是「换 PDF 库只改一个文件」，所以要挡住的是应用代码里的新引用。
+      - name: 门禁② 只有 pdf_parser.py 能 import pypdf
+        working-directory: workspace
+        run: |
+          hits=$(grep -rn -E '^[[:space:]]*(import|from)[[:space:]]+pypdf' apps/analyzer/app/ || true)
+          echo "$hits"
+          bad=$(printf '%s\n' "$hits" | grep -v 'pdf_parser\.py' | grep -c . || true)
+          echo "非 pdf_parser.py 的引用数：$bad（期望 0）"
+          test "$bad" -eq 0
+
+      # 门禁③：Java 不做 PDF 解析（ADR-102：解析属「算」，归 Python）
+      - name: 门禁③ Java 无 PDF 解析 API
+        working-directory: workspace
+        run: |
+          if grep -rn -E 'PDFTextStripper|PDDocument|pdfbox|PDFBox' apps/job-service/src; then
+            echo "::error::Java 层出现了 PDF 解析 API（ADR-102）"
+            exit 1
+          fi
+          echo "OK：Java 只搬字节，不解析 PDF"
+
+      # 门禁④：BFF 不直连 Python（C3 / ADR-101：严格线性链）
+      - name: 门禁④ BFF 无 analyzer 客户端
+        working-directory: workspace
+        run: |
+          if ls apps/bff/src/client/ | grep -qi analyzer; then
+            echo "::error::apps/bff/src/client/ 下出现了 analyzer 客户端（C3 禁止）"
+            exit 1
+          fi
+          if grep -rn -E 'https?://[^"'"'"' ]*:8000' apps/bff/src/client apps/bff/src/service; then
+            echo "::error::BFF 的 client/service 层出现了指向 8000 的 URL（C3 禁止）"
+            exit 1
+          fi
+          echo "OK：BFF 只与 job-service 对话"
+
+      # 门禁⑤：岗位分类不得回退成 Java enum（D1：分类是数据不是代码）
+      - name: 门禁⑤ 岗位分类无 enum 常量
+        working-directory: workspace
+        run: |
+          if grep -rn -E 'enum[[:space:]]+JobCategory|class[[:space:]]+JobCategory[[:space:]]*\{' \
+               apps/job-service/src/main/java | grep -v 'entity/'; then
+            echo "::error::岗位分类出现了 enum / 常量类（D1 禁止）"
+            exit 1
+          fi
+          echo "OK：分类只以数据形式存在"
+
+      # 门禁⑥：岗位只软删（D2），代码里不得有物理 DELETE
+      - name: 门禁⑥ 岗位无物理删除
+        working-directory: workspace
+        run: |
+          if grep -rniE 'delete[[:space:]]+from[[:space:]]+job\b' apps/job-service/src; then
+            echo "::error::出现了物理删除 job 的 SQL（D2 要求软删）"
+            exit 1
+          fi
+          echo "OK：岗位只软删"
+
+  # ==========================================================================
+  # 1. analyzer（Python / FastAPI）—— 解析 · 归一化 · 匹配 · 流式
+  # ==========================================================================
+  analyzer:
+    name: analyzer（Python 3.13）
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workspace/apps/analyzer
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: workspace/apps/analyzer/requirements.txt
+
+      - name: 安装依赖
+        run: python -m pip install -r requirements.txt
+
+      # M8.4 点名的三个文件：解析（含真实样本门禁）/ 打分手算 / 事件序列
+      - name: 关键回归（解析 · 匹配 · 流式）
+        run: |
+          python -m pytest \
+            tests/unit/test_pdf_parser.py \
+            tests/unit/test_matcher.py \
+            tests/unit/test_stream.py \
+            -v
+
+      - name: 全量测试
+        run: python -m pytest -q
+
+  # ==========================================================================
+  # 2. job-service（Java 17 / Spring Boot）—— 领域 API + 持久化 + 候选集装配
+  # ==========================================================================
+  job-service:
+    name: job-service（Java 17）
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workspace/apps/job-service
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+          cache-dependency-path: workspace/apps/job-service/pom.xml
+
+      # RequirementRepositoryTest 用**内嵌 H2**（MODE=MySQL）导入真实的
+      # db/h2/schema.sql + db/seed.sql —— 所以「种子能不能导进去」「行数对不对」
+      # 「重复导入不翻倍」都在这一条命令里被验掉（AC23），CI 不需要起 MySQL。
+      - name: 打包并测试（含 RequirementRepositoryTest）
+        run: mvn -B -ntp verify
+
+      - name: 上传测试报告（失败时）
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: job-service-surefire-reports
+          path: workspace/apps/job-service/target/surefire-reports/
+          if-no-files-found: ignore
+
+  # ==========================================================================
+  # 3. bff（Koa2 / TypeScript）—— 校验 · 编排 · SSE 透传
+  # ==========================================================================
+  bff:
+    name: bff（Node 22）
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workspace/apps/bff
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: workspace/apps/bff/package-lock.json
+
+      - name: 安装依赖（严格按 lock）
+        run: npm ci
+
+      - name: 类型检查
+        run: npm run type-check
+
+      # M8.4 点名的 e2e：SSE 事件序列 + AC12/AC13/AC21 三条边界
+      - name: 关键回归（流式 e2e）
+        run: npx jest tests/e2e/stream.test.ts
+
+      - name: 全量测试
+        run: npm test
+
+      - name: 构建
+        run: npm run build
+
+  # ==========================================================================
+  # 4. web（Vue 3 / Vite）—— 上传 · 流式解析 · 结果渲染
+  # ==========================================================================
+  web:
+    name: web（Node 22）
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workspace/apps/web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # ⚠️ 这里刻意用 `npm install` 而不是 `npm ci`：
+      #   本仓库的 apps/web/package-lock.json 是**残缺的最小骨架**
+      #   （生成它的那次 install 被环境的删除守卫拦下了，见 DELIVERY.md §7 D-10）。
+      #   `npm ci` 会因为 lock 与 package.json 不一致而直接失败。
+      #   本地补全 lock（cd apps/web && npm install）之后，这里应改回 `npm ci`。
+      - name: 安装依赖
+        run: npm install --no-audit --no-fund
+
+      - name: 类型检查
+        run: npm run type-check
+
+      # M8.4 点名的用例：SSE 分帧 + 流式状态机（含跨 chunk 截断）
+      - name: 关键回归（流式解析）
+        run: npx vitest run tests/unit/useAnalysisStream.spec.ts tests/unit/sse.spec.ts
+
+      - name: 全量测试
+        run: npm test
+
+      - name: 构建
+        run: npm run build
