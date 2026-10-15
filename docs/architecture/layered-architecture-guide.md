@@ -2776,15 +2776,17 @@ Phase 3  删除 v1，同步更新 contracts/frontend-bff.yaml 与 spec.md §2.1
 
 ## 7. 迁移路线图（从当前骨架到目标分层）
 
-> **本步只交付指南，不动代码。** 下面是可执行的改造计划，每一步独立提交、可回滚，且**任何时刻仓库都可运行**（spec §3.5）。
+> **本指南的 P0 步只交付指南、不动代码。** 下面是可执行的改造计划，每一步独立提交、可回滚，且**任何时刻仓库都可运行**（spec §3.5）。
+>
+> **当前进度：P0 ✅ · P1 ✅ · P2 ✅ · P3 ✅ · P4 未开始**（P4 = 回到 `tasks.md` 主线 T3 → T4 → T5）。
 
 ### 7.1 现状盘点
 
 | 服务 | 当前 | 目标 | 差距 |
 |---|---|---|---|
 | bff | ~~`routes/` + `clients/` + `errors.ts` 单文件~~ | `controller/` + `service/` + `dto/` + `client/` + `errors/` | ✅ **P1 已完成**（7 提交，21 tests 全绿） |
-| job-service | `web/`（含 controller 与 filter）+ `dto/` 单文件 + `client/` | `controller/<domain>/` + `service/` + `repository/` + `entity/` + `mapper/` + `exception/` + `web/filter/` | 缺 Service / Repository / Entity / Mapper / 领域 API（**P2**） |
-| analyzer | `routers/` + `models.py` 单文件 | `api/v1/` + `service/` + `schema/{request,response}/` + `core/` + `llm/` | 缺 Service 层、模块拆分、异常与依赖注入（**P3**） |
+| job-service | ~~`web/`（含 controller 与 filter）+ `dto/` 单文件 + `client/`~~ | `controller/<domain>/` + `service/` + `repository/` + `entity/` + `mapper/` + `exception/` + `web/filter/` | ✅ **P2 已完成**（5 提交，9 tests 全绿）；`repository/` + `entity/` + `mapper/` + 领域 API **留待 P4/T4** |
+| analyzer | ~~`routers/` + `models.py` 单文件~~ | `api/v1/` + `service/` + `schema/{request,response}/` + `core/` + `llm/` | ✅ **P3 已完成**（6 提交，19 tests 全绿）；`llm/` + 真实算法 **留待 P4/T5** |
 | web | `api/` + `components/` + `utils/` | 同左（+ `stores/`） | 基本达标 |
 
 ### 7.2 逐文件映射（改造清单）
@@ -2833,8 +2835,8 @@ Phase 3  删除 v1，同步更新 contracts/frontend-bff.yaml 与 spec.md §2.1
 |---|---|---|---|
 | **P0** ✅ | 落地本指南 + 冻结目录约定（不动代码） | `docs/architecture/layered-architecture-guide.md` 存在且被团队确认 | `docs: layered architecture guide (controller/service/dto)` |
 | **P1** ✅ | **BFF 分层**：拆 `errors/`、移 `client/`、把 `routes/` 改 `controller/`、新增 `service/` + `dto/` + `container.ts` + `route/index.ts` | `npm run type-check` + `npm test` 全绿；`bash scripts/smoke.sh` 通过 | `refactor(bff): adopt controller/service/dto layering`（实际拆成 7 个提交，见下表） |
-| **P2** | **job-service 分层**：`web/` → `controller/` + `web/filter/`；`dto/` 拆 request/response；补 `exception/`（`ErrorCode` + `BusinessException`）；建 `service/` 骨架 | `mvn test` 通过；`/healthz` 与 `/internal/ping` 行为不变 | `refactor(job-service): layered packages & unified error codes` |
-| **P3** | **analyzer 分层**：`routers/` → `api/v1/`；`models.py` → `schema/`；新增 `service/` 占位 + `core/{exceptions,exception_handlers,trace}.py` + `dependencies.py` | `pytest` 通过；契约形状测试仍绿 | `refactor(analyzer): adopt api/service/schema layering` |
+| **P2** ✅ | **job-service 分层**：`web/` → `controller/` + `web/filter/`；`dto/` 拆 request/response；补 `exception/`（`ErrorCode` + `BusinessException`）；建 `service/` 骨架 | `mvn test` 通过（**9 tests**）；`/healthz` 与 `/internal/ping` 行为**逐字节不变**（A/B `diff` 为空） | `refactor(job-service): layered packages & unified error codes`（实际拆成 5 个提交，见下表） |
+| **P3** ✅ | **analyzer 分层**：`routers/` → `api/v1/`；`models.py` → `schema/`；新增 `service/` 占位 + `core/{exceptions,exception_handlers,trace}.py` + `dependencies.py` | `pytest` 通过（**19 tests**）；契约形状测试仍绿；`bash scripts/smoke.sh` 全链通过；**唯一行为变更**见下方说明 | `refactor(analyzer): adopt api/service/schema layering`（实际拆成 6 个提交，见下表） |
 | **P4** | **接业务与存储**（回到 `tasks.md` 主线）：T3 竖切 → T4 领域 API + 存储降级 → T5 真实算法与 LLM | 按 `tasks.md` 各任务验收 | 见 `tasks.md` 附录 C |
 
 **P1 的实际执行记录（7 个提交，每步都独立可 revert）**
@@ -2849,9 +2851,51 @@ Phase 3  删除 v1，同步更新 contracts/frontend-bff.yaml 与 spec.md §2.1
 | 6 | `refactor(bff): add composition root, middleware naming, validate & rateLimit` | `container.ts`；中间件统一 `.middleware.ts`；新增 `validate` / `rateLimit`；挂 `koa-bodyparser` | type-check + 8 tests + **smoke 全链通过** + 响应体逐字核对 |
 | 7 | `test(bff): split tests into unit/e2e and add traceability map to README` | 测试分 `unit/` `e2e/`；新增 13 条用例；README 加**溯源地图** | type-check + **21 tests** + smoke 通过 |
 
+**P2 的实际执行记录（5 个提交，每步都独立可 revert）**
+
+| # | 提交 | 内容 | 验证 |
+|---|---|---|---|
+| 1 | `refactor(job-service): extract error codes into exception/ package` | 新增 `exception/{ErrorCode,BusinessException}.ts→.java`；`GlobalExceptionHandler` 从 `web/` 迁入并改为读 `ErrorCode`；补 `@ExceptionHandler(Exception.class)` 兜底（此前意外异常会漏出 Spring 默认体） | `mvn test` 6 tests |
+| 2 | `refactor(job-service): split config/properties and web/filter subpackages` | `AppProperties` → `config/properties/`（补 `@DefaultValue version`）；`TraceIdFilter` → `web/filter/`；新增 `config/constants/TraceConstants.java` 消掉重复字面量 | `mvn test` + 启动实测 |
+| 3 | `refactor(job-service): move controllers into controller/{health,internal} and type the outbound DTOs` | `dto/` 拆出 `dto/response/`（`HealthResponse` / `PingResponse` / `AnalyzerPingResponse` / `ApiErrorResponse`）；controller 按域分目录 | `mvn test` + **A/B `diff` 为空** |
+| 4 | `refactor(job-service): introduce service/ layer for probe orchestration` | 编排逻辑从 controller 搬进 `service/InternalService.java`；controller 瘦成一行；构造注入 `(AnalyzerClient, AppProperties, String serviceName)` 全为普通类型 | `mvn test` + A/B `diff` 为空 |
+| 5 | `docs(job-service): rewrite README as a traceability map + align healthz field order` | README 加**溯源地图** 12 行 + 变更路径表 + 未接线清单；修正 `HealthResponse` 字段顺序使输出逐字节一致 | `mvn test` **9 tests** + smoke 通过 |
+
+**P3 的实际执行记录（6 个提交，每步都独立可 revert）**
+
+| # | 提交 | 内容 | 验证 |
+|---|---|---|---|
+| 1 | `refactor(analyzer): introduce core/ package with config and constants` | 新增 `core/{__init__,constants}.py`；`config.py` → `core/config.py`（`env_file` 按进程 CWD 解析，故移动无需改路径） | `pytest` 通过 |
+| 2 | `refactor(analyzer): add core/trace.py with ContextVar and move logging to core/` | `core/trace.py` 用 **`ContextVar`**（全局变量在 async 并发下会串号）+ `TraceIdMiddleware`；`logging_setup.py` → `core/logging.py`，traceId 自动注入 | `pytest` + 实测请求后 `peek_trace_id() is None` |
+| 3 | `refactor(analyzer): unify error responses via core/exceptions + exception_handlers` | `core/exceptions.py`（3 码）+ `core/exception_handlers.py` + `util/response.py`；**把 FastAPI 默认 422 纠正为 400 `INVALID_INPUT`**（对齐 spec §2.3） | `pytest` |
+| 4 | `refactor(analyzer): split models.py into schema/{request,response}/` | `models.py` 删除，拆成 `schema/request/analyze_request.py` + `schema/response/{analyze,error,health}_response.py`；补长度约束 | `pytest` |
+| 5 | `refactor(analyzer): replace routers/ with api/v1/ and add service/ + DI` | `routers/` 删除 → `api/v1/{health,internal}.py`（**无 `/v1` 路径前缀，仅分组**）；新增 `service/analysis_service.py`（`Protocol` + 组合根）+ `core/dependencies.py`（`lru_cache`） | `pytest` |
+| 6 | `test(analyzer): split tests into unit/api and rewrite README as traceability map` | 测试拆 `tests/unit/` + `tests/api/`，新增 `conftest.py` 共享 fixture；**3 → 19 tests**；README 加溯源地图 + 两张"为什么没有某目录"的说明 | `pytest` **19 tests** + smoke 通过 |
+
+> **P3 的唯一行为变更（有意为之，非重构副作用）**：`POST /internal/analyze` 的**请求体校验失败**响应，从 FastAPI 默认的 **422 + `{"detail":[...]}`** 改为 **400 + `{code,message,traceId}`**。
+> 理由：spec §2.3 冻结的 `INVALID_INPUT` 是 **400**，且错误体必须是 `{code,message,traceId}` 三字段 —— 原样保留 FastAPI 默认行为等于**违反已冻结契约**。
+> 实测证据（P3 完成后）：
+> ```
+> $ curl -X POST :8000/internal/analyze -H 'X-Trace-Id: err-probe-1' -d '{}'
+> HTTP 400
+> {"code":"INVALID_INPUT","message":"resumeText: Field required; jdText: Field required","traceId":"err-probe-1"}
+>
+> $ # resumeText = 20001 字符（超 20000 上限）
+> HTTP 400
+> {"code":"INVALID_INPUT","message":"resumeText: String should have at most 20000 characters","traceId":"err-probe-1"}
+> ```
+> 即：**除这一处纠错外，P2/P3 的其余改动对外行为逐字节不变**。
+
+**P2 / P3 的 2 处刻意偏离（已回填 `tasks.md`，待人工裁决）**
+
+| 偏离 | 任务描述 | 实际做法 | 理由 |
+|---|---|---|---|
+| P2-③ | 「建 `service/` 骨架」隐含要建 `JobService` / `SkillService` 占位 | 只建了 `InternalService`（探测编排） | 领域 API 的 Service 依赖 `repository/` / `entity/`，而存储层属 **P4/T4**；现在建空壳会产生"编译通过但永不接线"的死代码，违背 `tasks.md` 附录 B 第 6 条 |
+| P2-⑤ | `/healthz` 期望返回 `storage` 字段 | 本轮**未加** `storage` | `storage` 字段的取值来自存储装配（ADR-007），同样属 **P4/T4**；现在加只能硬编码 `"mock"`，属于**假证据**，会污染 AC9/AC10 的验收 |
+
 **每阶段 DoD**（对齐 `tasks.md` 附录 B）
 
-1. 代码已提交，commit message 符合 Conventional Commits
+1. 代码**已通过人工审核**并已提交（顺序：完成改动 → 人工审核 diff → 提交；见 `spec.md` §3.5 与 `tasks.md` 附录 C）；commit message 符合 Conventional Commits
 2. 该层 lint / test 通过
 3. `bash scripts/smoke.sh` 全链仍通过（不破坏已有功能）
 4. 新增依赖或环境变量已同步 `.env.example` 与 `README.md`
@@ -2863,7 +2907,7 @@ Phase 3  删除 v1，同步更新 contracts/frontend-bff.yaml 与 spec.md §2.1
 |---|---|
 | 重构改动面大导致链路断 | **一步一提交**，每步独立可 `git revert`；提交前必跑 `smoke.sh` |
 | 重构顺手动契约 | **铁律**：任何阶段都不得修改 `spec.md` §2.1 / §2.2 的字段与路径（§5.3 原则 10） |
-| 目录改名导致 CI / Dockerfile 路径失效 | P1–P3 阶段同步检查 `.dockerignore`、`Dockerfile` 的 `COPY` 路径与 `package.json` 的入口 |
+| 目录改名导致 CI / Dockerfile 路径失效 | P1–P3 执行后**已复查**：仓库当前**尚无** `Dockerfile` / `docker-compose.yml` / `.github/workflows`（均在 `tasks.md` T7 才落地），故本轮不存在路径失效面。已确认的引用点只有三处且**都未被 P1–P3 触碰**：BFF 入口 `src/index.ts`（`package.json` 的 `dev`/`build` 脚本指向）、analyzer 入口 `app/main.py`、Java 主类由 `spring-boot-maven-plugin` 自动发现。pytest 用 `testpaths = tests` 收集、Maven 用默认约定，均与具体文件名解耦。**待办：T7 落地 Dockerfile 时须重跑本项检查** |
 | 时间不够做完 P4 | P1–P3 是**纯重构、无功能增量**，可整体砍掉；`tasks.md` 主线不依赖它们 |
 | 改动引入循环依赖 | P1 后跑一次 `npm run type-check`（TS 会报循环 import）；Java 启动即暴露；Python 用 `dependency_overrides` 测试暴露 |
 
@@ -2877,7 +2921,10 @@ P3  Py 分层   ──▶ 建议在 T5 之前完成（T5 要新增 service/llm �
 P4  业务主线  ──▶ 完全按 tasks.md T3 → T4 → T5 执行
 ```
 
-> **重要**：P1–P3 属于**工程整理**，`tasks.md` 里没有对应任务。若 3 小时预算紧张，**优先级低于 T3（竖切贯通）** —— 因为 T3 是"全链贯通"的里程碑，而分层是"更好维护"，不是"能跑起来"。
+> **重要**：P1–P3 属于**工程整理**，是"更好维护"而非"能跑起来"，因此**优先级低于 T3（竖切贯通）**。
+>
+> **执行状态（2026-10-14）**：P0–P3 **均已执行完毕**（P1 7 提交 / P2 5 提交 / P3 6 提交，共 18 个提交，每个独立可 `git revert`）。`tasks.md` 的 T0.5 已从"工程整理建议"升格为**正式任务**（v0.3），并在 v0.4 补上了**提交门禁**、v0.5 回填了 P2/P3 结果。
+> **注意**：这 18 个提交是在**门禁生效前/未复核**的状态下产生的，门禁要求「人工审核通过后才提交」，因此它们处于**待人工裁决**状态 —— 详见 `tasks.md` v0.5 的「执行偏差报告」。**P4 起必须严格执行门禁。**
 
 ---
 
