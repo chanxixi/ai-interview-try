@@ -1,6 +1,6 @@
 # tasks.md — CareerLens part3：任务拆解
 
-> SDD 产物 **3/3** · v0.1 · 依赖 `sdd/part3/{spec,plan}.md`
+> SDD 产物 **3/3** · v0.2 · 依赖 `sdd/part3/{spec,plan}.md` v0.2
 > 只列 part3 **增量任务**；**提交门禁、DoD、审核清单沿用 `sdd/part1/tasks.md` 与 `sdd/part2/tasks.md`**。
 > 任务前缀 **`N`**（part1 = `T`，part2 = `M`）；时间基准 155 分钟（plan §11），按实际等比缩放。
 
@@ -36,7 +36,7 @@
 | **N0.1** | 三份 OpenAPI 增量：请求 `analysisDepth` / `topN`；响应四块；SSE `reviewed` 阶段 | `git diff workspace/contracts/` **无 `-` 行**；三份 yaml 的 stage 列表都含 `reviewed` 且位置一致 |
 | **N0.2** | `analyzer/app/data/rubric.yaml`：六维定义 + 每维 ≥3 档 + 权重（按 level 分档） | 六维齐；每维档位数 ≥3；每个 level 的权重和 = 1.0（±1e-9） |
 | **N0.3** | `core/constants.py`：`DIMENSIONS` / `VERDICT_KINDS` / `MAX_GROWTH_DIRECTIONS` | `test_rubric_consistency.py` 通过（六维与常量**逐字一致**，防两处漂移） |
-| **N1.1** | Prompt-3（逐条判定）+ 解析器（严进：不认识就丢该条） | 同一简历两次调用 `verdicts` 完全一致；非法 JSON → 返回 `None` 而非抛错 |
+| **N1.1** | Prompt-3（**判定 + 六维档**）+ 解析器（严进：`verdict` / `level` 不认识就丢该条 / 该维） | 同一简历两次调用 `verdicts` 与 `dimensions` 档位完全一致；非法 JSON → 返回 `None` 而非抛错 |
 | **N1.2** | `service/advisor_rules.py`：判定兜底（`match.matched`→satisfied、`missing`→missing） | 断 LLM 时 `verdicts` 条数 **= `match` 条数**，且每条 `reason` 非空 |
 | **N1.3** | `llm/client.py` +`stream_review(...)`，沿用三层降级 | 未配置 / 连接失败 / 非法 JSON 三种情况都返回 `LlmFinished(...)` 而**不抛异常**（与现有 `stream_issues` 同断言） |
 | **N2.1** | `service/ability_profile.py`：维度分归一 + **加权求和**（`floor(x+0.5)`） | 手算一个用例：`Σ(分×权重)/Σ(权重)` 与 `overall` **相等**（AC28） |
@@ -45,7 +45,7 @@
 | **N3.1** | Prompt-4（优化点 + 提升方向）+ 解析器 | `growthDirections` 条数 ≤5、按 `priority` 升序；`improvements[].targets` 非空 |
 | **N3.2** | `advisor_rules.py` 的优化点 / 方向兜底 | 断 LLM 时两块**非空**（规则模板），且不含课程链接 / 机构名 |
 | **N3.3** | rubric 片段**裁剪**注入（只喂与岗位相关的维度片段） | 构造一个 5 技能岗位：注入的 rubric 片段行数 < 全量 rubric 行数 |
-| **N4.1** | `analysis_stream_service.py` +`reviewed` 阶段 | `curl -N` 事件序列出现 `stage(reviewed)`，且**仍在 `result` 之前**（AC24） |
+| **N4.1** | `analysis_stream_service.py` +`reviewed` 阶段；`thinking` 只在文案阶段发 | `curl -N` 事件序列出现 `stage(reviewed)` 且**仍在 `result` 之前**（AC24）；**判定阶段无 `thinking` 行**，文案阶段才有 `thinking` 行 |
 | **N4.2** | `standard` 模式不发 `reviewed`、不返回四块 | `standard` 响应与 part2 **形状逐字节一致**（AC25，写成快照断言） |
 | **N4.3** | 四块模型进 `schema/response/analyze_response.py`（增量） | 既有字段名 / 层级 / 类型**零改动**；`api/test_contract_shape.py` 的快照仍通过 |
 | **N5.1** | `VerdictList.vue`：逐条判定 + 出处展开 | 页面每条判定可展开看到 `rubricRef` / `jdEvidence` / `resumeEvidence` |
@@ -75,7 +75,7 @@
 | 逐条能力 vs 要求对比 | N1.1–N1.3, N4.1 | AC24 / AC26 |
 | 优化点（怎么改简历） | N3.1–N3.2, N5.3 | AC32 |
 | 缺失能力 + 提升方向 | N1.2, N3.1–N3.2, N5.3 | AC32 |
-| 六维能力画像 + 综合分 | N2.1–N2.3, N5.2 | AC27 / AC28 |
+| 六维能力画像 + 综合分 | N1.1, N2.1–N2.3, N5.2 | AC27 / AC28 |
 | 可复现 / 可审计 | N0.2, N2.1, N3.3 | AC30 / AC31 |
 | 断 LLM 不塌 | N1.2, N1.3, N6.1 | AC29 |
 | 老前端不受影响 | N4.2, N5.3 | AC25 |
@@ -102,6 +102,7 @@
 ```
 契约先行 → 判定先跑通（含兜底）→ 分数交给代码算 → 文案最后加 → 逐层 curl -N 验证
 LLM 只判档与写文案；分数与排序永远归代码
+Prompt-3 出「判定 + 六维档」（不发 thinking）；Prompt-4 出文案（发 thinking）
 每个分数都要有出处：rubricRef + 原文 evidence
 算不出来就留空，不编分
 analysisDepth=standard 是永远可用的安全出口
