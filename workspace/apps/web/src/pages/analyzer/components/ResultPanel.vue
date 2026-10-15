@@ -69,7 +69,7 @@ const hasSections = computed(() => {
       description="仅分析了前 20000 字，后面的内容未参与匹配。"
     />
 
-    <!-- <section class="panel">
+    <section class="panel">
       <h2 class="panel__title">简历速览</h2>
       <p v-if="!hasSections" class="panel__note">
         未能切出结构化章节（可能是排版特殊或扫描件）—— 匹配仍按全文技能词进行。
@@ -82,17 +82,17 @@ const hasSections = computed(() => {
           </el-tag>
         </div>
       </template>
-    </section> -->
+    </section>
 
     <!-- 左：分数环（仅当指定了岗位）；右：匹配明细 -->
-    <!-- <div class="result__match">
+    <div class="result__match">
       <ScoreRing
         v-if="props.result.match"
         :score="props.result.match.score"
         caption="目标岗位匹配度"
       />
       <MatchList :match="props.result.match" />
-    </div> -->
+    </div>
 
     <IssueList :issues="props.result.issues" />
     <RecommendList :recommendations="props.result.recommendations" />
