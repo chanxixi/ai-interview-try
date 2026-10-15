@@ -1,0 +1,773 @@
+openapi: 3.1.0
+
+info:
+  title: CareerLens · BFF → job-service (Java)
+  version: 0.2.0
+  description: |
+    # CareerLens 契约 2/3：Node BFF → Java / Spring Boot
+
+    链路位置：`Vue → BFF → [本契约] → job-service → analyzer → LLM`
+
+    ## 本跳的两个身份（这是 part2 最大的结构变化）
+
+    1. **领域数据唯一出口**：岗位 / 技能词典只由本层持有，BFF 与 Python 都不得直连数据库（spec §2.6）。
+    2. **part2 起成为链路的中间转发者**：C3 把 part1 的「BFF 扇出」收敛为**严格线性**，
+       Java 必须**透传文件字节 + 透传 SSE**，且**收到 Python 首个事件后才开始转发**
+       —— 否则退化成「先算完再返回」，违反 part2 spec §3（plan §1.2）。
+
+    ## 本跳的禁止项（part2 spec §2.7 / §3）
+
+    | 禁止 | 判定方式 |
+    |---|---|
+    | 解析 PDF | `grep -rn "PDFTextStripper\|PDDocument\|pdfbox" workspace/apps/job-service/` 必须为空 |
+    | 打分 | 打分公式的**唯一**实现在 `analyzer/service/matcher.py` |
+    | 直连 LLM | LLM 编排只在 Python |
+    | 物理删除岗位 | `grep -rn "delete.*from job\b"` 为空（D2：只软删） |
+    | 用 `enum` 维护岗位分类 | 分类是**数据**（`job_category` 表），新增一类只插行（D1 / AC22） |
+
+    ## 命名规范
+
+    与 `frontend-bff.yaml` 的 `x-api-conventions` **完全一致**（该处是全项目唯一真源，本文件不重复维护）：
+
+    - 除 `GET /healthz` 外，所有路由以 `/api` 开头
+    - 资源用复数名词 + HTTP 方法表意；过滤走 query 参数
+    - 成功响应不套壳；错误统一 `{ code, message, traceId }`
+    - traceId header 固定 `X-Trace-Id`
+
+    ## 与 frontend-bff.yaml 的关系
+
+    `GET /api/jobs`、`GET /api/jobs/{jobId}`、`GET /api/skills` 三者的**响应结构与上游逐字一致**
+    —— 这正是「存储降级对上游透明」的判据（AC9 / AC10）。BFF 只做转发与裁剪，不做字段改名。
+
+servers:
+  - url: http://localhost:8080
+    description: job-service（Java 17 + Spring Boot 3.2）
+
+tags:
+  - name: health
+    description: 运维探针（part1 spec §2.8；含存储降级的唯一可观测证据）
+  - name: jobs
+    description: 岗位领域数据（只读预置；持久化走 mysql → local → mock 三档降级）
+  - name: skills
+    description: 技能词典（只读预置）
+  - name: analysis
+    description: 分析编排 —— 装配候选集 + 透传（本层不算分）
+
+# ============================================================================================
+# 本跳端点清单（全项目总表在 frontend-bff.yaml 的 x-api-inventory，此处只列本跳，便于评审对读）
+# ============================================================================================
+x-api-inventory-hop:
+  hop: "bff→java"
+  entries:
+    - { method: GET,    path: "/healthz",              status: implemented, task: "P0",    note: "★ 唯一需要在本跳返回 `storage` 的端点（spec §2.8 / §2.9）" }
+    - { method: GET,    path: "/api/jobs",             status: frozen,      task: "T4",    note: "?category= 过滤（AC22）" }
+    - { method: GET,    path: "/api/jobs/{jobId}",     status: frozen,      task: "T4" }
+    - { method: GET,    path: "/api/skills",           status: frozen,      task: "T4" }
+    - { method: POST,   path: "/api/analysis",         status: new,         task: "T3/M5", note: "★ C3 推论：同步链也必须过 Java（plan §3 只写了 stream，本契约补齐并标注）" }
+    - { method: POST,   path: "/api/analysis/stream",  status: new,         task: "M5",    note: "multipart 字节透传 + SSE 透传" }
+    - { method: GET,    path: "/api/internal/ping",    status: implemented, task: "P0",    note: "现状 /internal/ping，M5 对齐（见 x-code-delta）" }
+
+x-code-delta:
+  description: |
+    M1 只冻结契约、不动代码。本跳的现状差异（完整清单见 `frontend-bff.yaml` 的 `x-code-delta`）：
+  items:
+    - { current: "GET /internal/ping", target: "GET /api/internal/ping", file: "workspace/apps/job-service/src/main/java/com/careerlens/jobservice/controller/internal/InternalController.java（@RequestMapping(\"/internal\")）", milestone: "M5", note: "M5.6 会新增 controller/analysis/AnalysisController.java（新文件直接用新路径）" }
+
+paths:
+
+  # ------------------------------------------------------------------------------------ health
+  /healthz:
+    get:
+      tags: [health]
+      operationId: getHealth
+      summary: 健康检查 + **存储模式**（spec §2.8 / §2.9）
+      description: |
+        与另两个服务不同，本跳的 `/healthz` **必须**额外返回 `storage` —— 它是
+        「存储降级」这条链的**唯一可观测证据**，且**不进入任何业务响应**。
+
+        降级**不得**返回 5xx（spec §2.9）：MySQL 连不上就下沉 `local`，H2 也起不来就下沉 `mock`。
+        判定方法：停掉 MySQL 容器后重启本服务，三个领域接口仍返回完整数据（AC10）。
+      responses:
+        '200':
+          description: 服务存活
+          headers:
+            X-Trace-Id: { $ref: '#/components/headers/TraceId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthResponse' }
+              examples:
+                mysql:
+                  summary: 主路径
+                  value: { status: ok, service: careerlens-job-service, storage: mysql }
+                local:
+                  summary: MySQL 不可用，降级到 H2
+                  value: { status: ok, service: careerlens-job-service, storage: local }
+                mock:
+                  summary: H2 亦不可用，兜底内置数据
+                  value: { status: ok, service: careerlens-job-service, storage: mock }
+
+  # ------------------------------------------------------------------------------------ jobs
+  /api/jobs:
+    get:
+      tags: [jobs]
+      operationId: listJobs
+      summary: 岗位列表（只读；默认只出 active）
+      description: |
+        默认过滤 `status = 'active' AND deleted_at IS NULL`。
+        `archived` 岗位**不再进推荐候选，但库中行仍在**（D2 软删 / AC23）。
+
+        排序稳定：`sort_order` → `job.id`，保证两次调用顺序一致。
+      parameters:
+        - $ref: '#/components/parameters/TraceIdHeader'
+        - name: category
+          in: query
+          required: false
+          description: |
+            按 `job_category.code` 过滤（如 `tech-fullstack`）。**AC22 的查询入口**。
+            实现方式：`WHERE job.category_id = (SELECT id FROM job_category WHERE code = ?)`
+            —— 分类树是**数据**，新增分类只插行，不改 Java 代码（D1）。
+          schema: { type: string, example: tech-fullstack }
+      responses:
+        '200':
+          description: 岗位列表
+          headers:
+            X-Trace-Id: { $ref: '#/components/headers/TraceId' }
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/JobSummary' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /api/jobs/{jobId}:
+    get:
+      tags: [jobs]
+      operationId: getJob
+      summary: 岗位详情（含标签）
+      parameters:
+        - $ref: '#/components/parameters/TraceIdHeader'
+        - name: jobId
+          in: path
+          required: true
+          description: 岗位业务稳定键（= DB `job.code`），如 `job-java-01`
+          schema: { type: string, example: job-java-01 }
+      responses:
+        '200':
+          description: 岗位详情
+          headers:
+            X-Trace-Id: { $ref: '#/components/headers/TraceId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobDetail' }
+        '404': { $ref: '#/components/responses/JobNotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  # ---------------------------------------------------------------------------------- skills
+  /api/skills:
+    get:
+      tags: [skills]
+      operationId: listSkills
+      summary: 技能词典（只读）
+      description: |
+        `skill` + `skill_alias` 两表由 `scripts/gen-seed.sh` 从 `analyzer/app/data/skills.yaml`
+        生成，**禁止手改 `db/seed.sql`**（C4 / 附录 C 审核项）。
+      parameters:
+        - $ref: '#/components/parameters/TraceIdHeader'
+        - name: category
+          in: query
+          required: false
+          schema: { type: string, example: framework }
+      responses:
+        '200':
+          description: 技能词典
+          headers:
+            X-Trace-Id: { $ref: '#/components/headers/TraceId' }
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/SkillItem' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  # ------------------------------------------------------------------------------- analysis
+  /api/analysis:
+    post:
+      tags: [analysis]
+      operationId: analyzeSync
+      summary: 同步分析（★ C3 推论新增：同步链也必须过 Java）
+      description: |
+        **为什么本跳也有这个端点**：part1 的请求链是「BFF 扇出」（BFF 同时调 Java 与 Python），
+        part2 的 C3 把它收敛为**严格线性**，而 part2 spec §3 明确「**禁止 BFF 直连 Python**」。
+        因此 part1 里由 BFF 直接打给 Python 的同步分析，part2 起必须改走
+        `BFF → Java → Python`。plan §3 只列了 stream 的增量，**本契约按 C3 补齐同步这一条并显式标注**。
+
+        本跳的职责（M5.5 `AnalysisOrchestrationService` —— **唯一**给 Python 数据的地方）：
+        1. 校验 `jobId` 是否存在（不存在 → 404 `JOB_NOT_FOUND`）
+        2. 装配候选集（全部 active 岗位 + 各自 `requirements`）
+        3. 若指定了 `jobId`，把该岗位 `jdText` 作为**匹配目标原文**一并下发
+        4. 调 Python `/api/internal/analyze`，把结果原样返回
+
+        ⚠️ 本层**不算分、不改字段名**。
+      parameters:
+        - $ref: '#/components/parameters/TraceIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AnalyzeRequest' }
+      responses:
+        '200':
+          description: 分析结果（part2 spec §2.3 五块）
+          headers:
+            X-Trace-Id: { $ref: '#/components/headers/TraceId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AnalysisResult' }
+        '400': { $ref: '#/components/responses/InvalidInput' }
+        '404': { $ref: '#/components/responses/JobNotFound' }
+        '422': { $ref: '#/components/responses/AnalysisFailed' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+        '504': { $ref: '#/components/responses/UpstreamTimeout' }
+
+  /api/analysis/stream:
+    post:
+      tags: [analysis]
+      operationId: analyzeStream
+      summary: 流式分析（★ M5 新增）
+      description: |
+        **multipart 进 / SSE 出**。本跳是「字节搬运工」：
+
+        ```
+        BFF --(multipart 原样)--> Java --(multipart + jobCandidates)--> Python
+        BFF <-------(SSE 逐块原样)------- Java <---------(SSE)----------- Python
+        ```
+
+        ## 三条硬约束
+
+        1. **Java 不解析 PDF** —— 只把字节搬给 Python（ADR-102；`grep pdfbox` 必须为空）
+        2. **收到 Python 首个事件后才开始转发** —— 否则退化成「先算完再返回」（plan §1.2）
+        3. **不得攒批**：逐块 flush；`SseEmitter(timeout=130_000)` + 独立 `TaskExecutor`
+           （plan §6.3 风险 7：防止线程耗尽）
+
+        ## 超时（plan §6.1 超时矩阵，外层必须 > 内层）
+
+        | 链路 | 超时 | 超时行为 |
+        |---|---|---|
+        | BFF → Java | 120s | 发 `error: UPSTREAM_TIMEOUT` + `done` |
+        | **Java → Python** | **110s** | 同上 |
+        | Python → LLM | 20s | 降级（`degraded=true`），不发 thinking |
+
+        ## 文件校验在哪一层
+
+        **不在本层**。大小 / MIME / magic number 的**唯一校验点**是
+        `bff/middleware/upload.middleware.ts`（M6.2）；页数 / 损坏 / 加密 / 无文本层
+        由 Python 判定并发 SSE `error`。本层 413 / 415 只做**原样透传**（M6.5）。
+      parameters:
+        - $ref: '#/components/parameters/TraceIdHeader'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: '#/components/schemas/AnalyzeStreamRequest' }
+      responses:
+        '200':
+          description: SSE 事件流（Java **不重写事件**，原样透传 Python 的帧）
+          headers:
+            X-Trace-Id: { $ref: '#/components/headers/TraceId' }
+            Cache-Control:
+              schema: { type: string }
+              description: "固定 `no-cache`"
+            X-Accel-Buffering:
+              schema: { type: string }
+              description: "固定 `no`"
+          content:
+            text/event-stream:
+              schema: { $ref: '#/components/schemas/SseStream' }
+              x-sse-event-map:
+                framing: "`event: <type>\\n` + `data: <单行 JSON>\\n` + `\\n`；心跳 `: ping\\n\\n`（15s 无事件）"
+                order: [meta, stage, thinking, result, error, done]
+                hard-rules:
+                  - "`meta` **必为首个**事件；`done` **必为最后一个**事件"
+                  - "失败路径：`... → error → done`（`error` 后**仍发** `done`）"
+                  - "`error` 与 `result` **互斥**"
+                  - "`stage.status = fail` **不终止流**"
+                  - "`result` 恰好一次"
+                stages: [accepted, parsed, cleaned, normalized, matched, recommended, llm]
+                events:
+                  - { event: meta,     count: "恰好 1 次", schema: '#/components/schemas/SseMetaEvent' }
+                  - { event: stage,    count: "每阶段 start/ok 各 1 次", schema: '#/components/schemas/SseStageEvent' }
+                  - { event: thinking, count: "0..n 次", schema: '#/components/schemas/SseThinkingEvent' }
+                  - { event: result,   count: "恰好 1 次（与 error 互斥）", schema: '#/components/schemas/AnalysisResult' }
+                  - { event: error,    count: "0 或 1 次（与 result 互斥）", schema: '#/components/schemas/SseErrorEvent' }
+                  - { event: done,     count: "恰好 1 次，必为末尾", schema: '#/components/schemas/SseDoneEvent' }
+              examples:
+                passthrough:
+                  summary: 原样透传（Java 不加工）
+                  value: |
+                    event: meta
+                    data: {"traceId":"a1b2c3d4","source":"pdf"}
+
+                    event: stage
+                    data: {"stage":"accepted","status":"ok","elapsedMs":3,"detail":{"bytes":184320}}
+        '400': { $ref: '#/components/responses/InvalidInput' }
+        '404': { $ref: '#/components/responses/JobNotFound' }
+        '413': { $ref: '#/components/responses/FileTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedFileType' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+        '504': { $ref: '#/components/responses/UpstreamTimeout' }
+
+components:
+
+  parameters:
+    TraceIdHeader:
+      name: X-Trace-Id
+      in: header
+      required: false
+      description: 全链追踪 ID（spec §2.8）。BFF 生成，本层与 Python 必须原样透传
+      schema: { type: string }
+
+  headers:
+    TraceId:
+      description: 本跳实际使用的 traceId
+      schema: { type: string }
+
+  responses:
+    InvalidInput:
+      description: 参数校验失败（spec §2.3）
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          examples:
+            invalid:
+              value: { code: INVALID_INPUT, message: '请求参数不合法', traceId: a1b2c3d4 }
+    JobNotFound:
+      description: "`jobId` 不存在或已归档（spec §2.3）"
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          examples:
+            notFound:
+              value: { code: JOB_NOT_FOUND, message: '岗位不存在', traceId: a1b2c3d4 }
+    FileTooLarge:
+      description: "文件 >10 MB —— 由 BFF 判定后**原样透传**（M6.5），本层不重复校验"
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          examples:
+            tooLarge:
+              value: { code: FILE_TOO_LARGE, message: '文件超过 10 MB 上限', traceId: a1b2c3d4 }
+    UnsupportedFileType:
+      description: "MIME / magic number 不符 —— 由 BFF 判定后**原样透传**（M6.5）"
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          examples:
+            badType:
+              value: { code: UNSUPPORTED_FILE_TYPE, message: '文件类型不是 PDF（依据文件头判定）', traceId: a1b2c3d4 }
+    AnalysisFailed:
+      description: 分析失败（spec §2.3）。流式路径下的解析类失败走 SSE `error` 事件
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          examples:
+            failed:
+              value: { code: ANALYSIS_FAILED, message: '分析失败', traceId: a1b2c3d4 }
+    ServiceUnavailable:
+      description: 下游（Python / 数据库）不可用（spec §2.3）。注意：**存储降级不算不可用**，它在层内消化
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          examples:
+            down:
+              value: { code: SERVICE_UNAVAILABLE, message: '下游服务 analyzer 暂时不可用', traceId: a1b2c3d4 }
+    UpstreamTimeout:
+      description: 下游超时（plan §6.1）
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          examples:
+            timeout:
+              value: { code: UPSTREAM_TIMEOUT, message: '下游服务响应超时', traceId: a1b2c3d4 }
+    InternalError:
+      description: 未预期错误（spec §2.3）
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          examples:
+            internal:
+              value: { code: INTERNAL_ERROR, message: '服务内部错误', traceId: a1b2c3d4 }
+
+  schemas:
+
+    # ------------------------------------------------------------------ 通用
+    ErrorResponse:
+      type: object
+      description: 统一错误响应体（spec §2.3 冻结）
+      required: [code, message, traceId]
+      properties:
+        code: { type: string }
+        message: { type: string, description: "预置文案，不透传原始错误栈" }
+        traceId: { type: string }
+      additionalProperties: false
+
+    HealthResponse:
+      type: object
+      description: "★ 本跳独有：`storage` 是存储降级的唯一可观测证据（spec §2.8 / §2.9）"
+      required: [status, service, storage]
+      properties:
+        status: { type: string, const: ok }
+        service: { type: string, examples: [careerlens-job-service] }
+        storage:
+          type: string
+          enum: [mysql, local, mock]
+          description: "实际生效的数据来源。由 `app.storage.mode`（auto|mysql|local|mock）在**装配期**探测决定（ADR-007），不是运行期 if/else"
+      additionalProperties: false
+
+    StorageMode:
+      type: string
+      enum: [mysql, local, mock]
+
+    Source:
+      type: string
+      enum: [pdf, text]
+
+    # ------------------------------------------------------------------ 请求
+    AnalyzeRequest:
+      type: object
+      description: |
+        `POST /api/analysis` 入参（BFF → Java）。
+        与 part1 的差异：`jobId` / `jdText` 的解析与「取 JD 原文」现在由**本层**完成。
+      required: [resumeText]
+      properties:
+        resumeText: { type: string, minLength: 1, maxLength: 20000 }
+        jobId: { type: string, description: "与 `jdText` 至少提供一个；同时提供时以 `jobId` 为准" }
+        jdText: { type: string, minLength: 1, maxLength: 8000 }
+        traceId: { type: string }
+      additionalProperties: false
+
+    AnalyzeStreamRequest:
+      type: object
+      description: |
+        `POST /api/analysis/stream` 入参（BFF → Java，multipart 原样转发）。
+        本层**不改文件字节**，只补装配好的 `jobCandidates` 再转给 Python。
+      properties:
+        file: { type: string, format: binary, description: "单个 PDF；BFF 已校验过大小与 magic number" }
+        resumeText: { type: string, minLength: 1, maxLength: 20000 }
+        jobId: { type: string, description: "可缺省；缺省且无 `jdText` 时 `match` 为 `null`" }
+        jdText: { type: string, maxLength: 8000 }
+        traceId: { type: string }
+
+    # ------------------------------------------------------------------ 响应（part2 §2.3 五块）
+    NormalizedSkill:
+      type: object
+      required: [raw, canonical]
+      properties:
+        raw: { type: string }
+        canonical: { type: string }
+        category: { type: ['string', 'null'] }
+      additionalProperties: false
+
+    ResumeSections:
+      type: object
+      required: [education, experience, projects, skills]
+      properties:
+        education: { type: array, items: { type: string } }
+        experience: { type: array, items: { type: string } }
+        projects: { type: array, items: { type: string } }
+        skills: { type: array, items: { type: string } }
+      additionalProperties: false
+
+    ResumeView:
+      type: object
+      required: [sections, skills]
+      properties:
+        sections: { $ref: '#/components/schemas/ResumeSections' }
+        skills: { type: array, items: { $ref: '#/components/schemas/NormalizedSkill' } }
+      additionalProperties: false
+
+    IssueType:
+      type: string
+      enum: [NO_QUANTIFY, NO_STAR, SKILL_STUFFING, TIMELINE_GAP, MISSING_CONTACT]
+
+    Severity:
+      type: string
+      enum: [high, medium, low]
+
+    Importance:
+      type: string
+      enum: [required, preferred]
+
+    Issue:
+      type: object
+      required: [type, severity, evidence, suggestion]
+      properties:
+        type: { $ref: '#/components/schemas/IssueType' }
+        severity: { $ref: '#/components/schemas/Severity' }
+        evidence: { type: string }
+        suggestion: { type: string }
+      additionalProperties: false
+
+    MatchedItem:
+      type: object
+      required: [skill, importance, weight, jdEvidence, resumeEvidence]
+      properties:
+        skill: { type: string }
+        importance: { $ref: '#/components/schemas/Importance' }
+        weight: { type: number }
+        jdEvidence: { type: string }
+        resumeEvidence: { type: string }
+        jdOffset: { type: ['integer', 'null'] }
+        resumeOffset: { type: ['integer', 'null'] }
+      additionalProperties: false
+
+    MissingItem:
+      type: object
+      required: [skill, importance, suggestion]
+      properties:
+        skill: { type: string }
+        importance: { $ref: '#/components/schemas/Importance' }
+        suggestion: { type: string }
+      additionalProperties: false
+
+    MatchResult:
+      type: object
+      required: [score, matched, missing]
+      properties:
+        score: { type: integer, minimum: 0, maximum: 100 }
+        matched: { type: array, items: { $ref: '#/components/schemas/MatchedItem' } }
+        missing: { type: array, items: { $ref: '#/components/schemas/MissingItem' } }
+      additionalProperties: false
+
+    RecommendationMatchedItem:
+      type: object
+      description: "命中**摘要**（不含双向证据，完整证据在 `match` 块）"
+      required: [skill, importance]
+      properties:
+        skill: { type: string }
+        importance: { $ref: '#/components/schemas/Importance' }
+      additionalProperties: false
+
+    RecommendationMissingItem:
+      type: object
+      required: [skill, importance, suggestion]
+      properties:
+        skill: { type: string }
+        importance: { $ref: '#/components/schemas/Importance' }
+        suggestion: { type: string }
+      additionalProperties: false
+
+    Recommendation:
+      type: object
+      required: [jobId, title, company, level, score, matched, missing, reason]
+      properties:
+        jobId: { type: string }
+        title: { type: string }
+        company: { type: ['string', 'null'] }
+        level: { type: ['string', 'null'] }
+        score: { type: integer, minimum: 0, maximum: 100 }
+        matched: { type: array, items: { $ref: '#/components/schemas/RecommendationMatchedItem' } }
+        missing: { type: array, items: { $ref: '#/components/schemas/RecommendationMissingItem' } }
+        reason: { type: string }
+      additionalProperties: false
+
+    AnalysisMeta:
+      type: object
+      required: [traceId, llmUsed, degraded, elapsedMs, source, truncated, recommendationCount]
+      properties:
+        traceId: { type: string }
+        llmUsed: { type: boolean }
+        degraded: { type: boolean }
+        elapsedMs: { type: integer }
+        source: { $ref: '#/components/schemas/Source' }
+        truncated: { type: boolean }
+        recommendationCount: { type: integer }
+      additionalProperties: false
+
+    AnalysisResult:
+      type: object
+      description: part2 spec §2.3（五块）。同步与流式共用同一形状
+      required: [resume, issues, match, recommendations, meta]
+      properties:
+        resume: { $ref: '#/components/schemas/ResumeView' }
+        issues: { type: array, items: { $ref: '#/components/schemas/Issue' } }
+        match:
+          description: "可空：未指定 `jobId` / `jdText` 时为 `null`"
+          oneOf:
+            - $ref: '#/components/schemas/MatchResult'
+            - type: 'null'
+        recommendations: { type: array, items: { $ref: '#/components/schemas/Recommendation' } }
+        meta: { $ref: '#/components/schemas/AnalysisMeta' }
+      additionalProperties: false
+
+    # ------------------------------------------------------------------ 领域数据
+    JobSummary:
+      type: object
+      description: |
+        岗位摘要。`id` = 业务稳定键（DB `job.code`）。
+        **数据库自增主键 `job.id`（BIGINT）不出服务**，只作外键目标 —— 对外一律用 `code`。
+      required: [id, title, jdText]
+      x-db-mapping:
+        id: "job.code"
+        title: "job.title"
+        company: "job.company"
+        level: "job.level"
+        jdText: "job.jd_raw"
+        category: "job_category.code"
+        status: "job.status（draft|active|archived）"
+        deletedAt: "job.deleted_at（软删，D2）"
+      properties:
+        id: { type: string, examples: [job-java-01] }
+        title: { type: string }
+        company: { type: ['string', 'null'] }
+        level: { type: ['string', 'null'] }
+        jdText: { type: string }
+        category: { type: ['string', 'null'], description: "分类 code（part2 新增字段；分类是数据不是代码，D1）" }
+      additionalProperties: false
+
+    JobDetail:
+      allOf:
+        - $ref: '#/components/schemas/JobSummary'
+        - type: object
+          properties:
+            tags:
+              type: array
+              description: 横切特征标签（多选）。与 `category` 不混：category 单选管归属，tag 多选管特征
+              items: { type: string }
+          additionalProperties: false
+
+    SkillItem:
+      type: object
+      description: 技能词典条目（真源 = `analyzer/app/data/skills.yaml`，C4）
+      required: [canonical, category]
+      properties:
+        canonical: { type: string }
+        aliases: { type: array, items: { type: string } }
+        category: { type: string, enum: [language, framework, db, middleware, frontend, devops, tool, ai] }
+      additionalProperties: false
+
+    # ------------------------------------------------------------------ Java → Python 装配体
+    RequirementDto:
+      type: object
+      description: |
+        岗位技能要求（**离线已归一化后落库**，D3：`job_requirement.skill_id NOT NULL`）。
+        字段名与 plan §3 逐字一致。
+      required: [skill, importance]
+      x-db-mapping:
+        skill: "skill.canonical（经 job_requirement.skill_id 关联）"
+        importance: "job_requirement.importance"
+        evidence: "job_requirement.evidence"
+        jdOffset: "job_requirement.jd_offset"
+        skillRaw: "job_requirement.skill_raw（展示用原文写法）"
+      properties:
+        skill: { type: string, description: "**标准名**（canonical），如 `C++` 而非 `C/C++`" }
+        importance: { $ref: '#/components/schemas/Importance' }
+        evidence: { type: string, description: "JD 原文依据（逐字复制）" }
+        jdOffset: { type: ['integer', 'null'], description: "`evidence` 在 JD 原文中的起始下标" }
+        skillRaw: { type: ['string', 'null'], description: "JD 里的原文写法" }
+      additionalProperties: false
+
+    JobCandidateDto:
+      type: object
+      description: |
+        Java 装配后下发给 Python 的候选岗位（plan §3）。
+        ⚠️ **不含 `jdText` 原文** —— 这是「数据归 Java、算法归 Python」的物理保证，
+        也让 Python 的匹配退化为纯集合运算。目标岗位的 JD 原文（用于生成双向证据）
+        由本层单独放在 **`bff-python.yaml`** 的 `targetJdText` 字段里下发
+        （见本文件 `x-contract-refinement` R2）。
+      required: [jobId, title, requirements]
+      properties:
+        jobId: { type: string, examples: [job-java-01] }
+        title: { type: string }
+        company: { type: ['string', 'null'] }
+        level: { type: ['string', 'null'] }
+        category: { type: ['string', 'null'] }
+        requirements: { type: array, items: { $ref: '#/components/schemas/RequirementDto' } }
+      additionalProperties: false
+
+    # ------------------------------------------------------------------ SSE
+    SseStream:
+      type: string
+      description: "SSE 文本流；消费方按 `\\n\\n` 分帧 + 行缓冲解析"
+      x-framing: "event: <type>\\ndata: <单行 JSON>\\n\\n"
+
+    SseStageName:
+      type: string
+      description: 阶段枚举（part2 spec §2.4 冻结，按序）
+      enum: [accepted, parsed, cleaned, normalized, matched, recommended, llm]
+
+    SseStageStatus:
+      type: string
+      enum: [start, ok, fail]
+
+    SseMetaEvent:
+      type: object
+      required: [traceId, source]
+      properties:
+        traceId: { type: string }
+        source: { $ref: '#/components/schemas/Source' }
+      additionalProperties: false
+
+    SseStageEvent:
+      type: object
+      required: [stage, status, elapsedMs, detail]
+      properties:
+        stage: { $ref: '#/components/schemas/SseStageName' }
+        status: { $ref: '#/components/schemas/SseStageStatus' }
+        elapsedMs: { type: integer }
+        detail: { type: object, additionalProperties: true }
+      additionalProperties: false
+
+    SseThinkingEvent:
+      type: object
+      required: [delta]
+      properties:
+        delta: { type: string }
+      additionalProperties: false
+
+    SseErrorEvent:
+      type: object
+      description: |
+        致命阶段失败（与 `result` 互斥，`error` 后仍发 `done`）。
+        可能的 code：`PDF_PARSE_FAILED` / `PDF_ENCRYPTED` / `PDF_NO_TEXT_LAYER` /
+        `PDF_TOO_MANY_PAGES` / `UPSTREAM_TIMEOUT` / `SERVICE_UNAVAILABLE`。
+      required: [code, message, traceId]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        traceId: { type: string }
+      additionalProperties: false
+
+    SseDoneEvent:
+      type: object
+      required: [elapsedMs]
+      properties:
+        elapsedMs: { type: integer }
+      additionalProperties: false
+
+# ============================================================================================
+# 对 plan §3 的两处细化 —— 需评审确认（施工单要求：走偏必须对照 spec/plan 并显式标注）
+# ============================================================================================
+x-contract-refinement:
+  - id: R1
+    topic: "同步分析也要经过 Java"
+    plan-says: "plan §3 只列了 `bff-java.yaml: + POST /api/analysis/stream`"
+    spec-says: "part2 spec §2.1 C3（严格线性）+ §3「禁止 BFF 直连 Python」"
+    decision: "本契约补上 `POST /api/analysis`（BFF → Java）"
+    reason: "C3 收敛后，part1 里 BFF 直连 Python 的同步入口不合法；不补则同步降级链（ADR-108 / AC21）无路可走"
+    cost: "Java 多一个端点（复用同一套编排，无额外实现成本）"
+  - id: R2
+    topic: "目标 JD 原文的传递位置"
+    plan-says: "plan §3 写「Java 额外把该岗位 `jdText` 放进 `jobCandidates[0].jdText`」"
+    spec-says: "part2 spec §2.2（`jdText` 与 `jobId` 二选一，且都可缺省）"
+    decision: "放在**顶层** `jdText` 字段（沿用 part1 已有字段名），`jobCandidates[]` 保持纯净（无 jdText）"
+    reason: |
+      ① 自定义 JD 场景（前端直接传 `jdText`、无 `jobId`）**塞不进**候选集 —— 它不对应任何库中岗位；
+      ② 「第一个候选带 jdText 就是目标」是隐式约定，读契约的人猜不出来；
+      ③ 顶层 `jdText` 是 part1 就有的字段（语义从「BFF 传入的输入」升级为「目标 JD 原文」），
+         属**纯增量**，不破坏「三份契约只增不删」。
+    cost: "与 plan §3 的一句话表述不一致，已在两份契约中同步标注"

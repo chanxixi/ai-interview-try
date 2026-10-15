@@ -1,0 +1,309 @@
+# ============================================================================
+# skills.yaml —— 技能词典「真源」（part2 spec §2.1 契约变更 C4）
+# ----------------------------------------------------------------------------
+# 真源为什么在仓库里、而不是数据库 skill 表：
+#   C4 把真源从「数据库 skill 表」改为「仓库内 YAML」，一次性去掉两个失败面 ——
+#   ① HTTP 同步（谁先启动、同步失败怎么办）；② 双副本漂移（YAML 改了库没改）。
+#   现在的关系是单向派生：本文件 → scripts/gen-seed.sh → db/seed.sql → skill / skill_alias
+#   因此 **改本文件后必须复跑 gen-seed.sh**，否则归一化率静默下降（DoD §8）。
+#
+# 谁在读它：
+#   ① 构建期 scripts/gen-seed.sh —— 生成 skill / skill_alias 两表，并校验岗位 JSON
+#      里的 skill 全部是这里的 canonical（D3：skill_id NOT NULL 的前提）
+#   ② 运行期 analyzer 的 service/normalizer.py（M3.2）—— 加载成本文件，
+#      不连数据库（Python 禁止直连库，spec §2.7）
+#
+# 四条书写规则（plan §4.6）
+#   ① canonical 写**标准名**：写 "Vue" 不写 "Vue3"；写 "C++" 不写 "C/C++"；
+#      写 "TCP/IP" 不写 "TCP\P"
+#   ② aliases 只放**别的写法**（连字符/空格变体、旧名、常见缩写），**不重复 canonical 自身**
+#      —— canonical 由 normalizer 的「规范化后再查」这一跳命中，塞进别名表纯属冗余
+#   ③ alias 必须**全局唯一**（大小写不敏感）：两个技能写同一个别名会让 gen-seed.sh
+#      直接失败 —— 这是有意的，歧义别名（"Spring" 到底指 Boot 还是 Cloud）必须在源头拦掉
+#   ④ category 只能取下面 categories 里的值
+#
+# ⚠️ 不要在这里加「软技能」（沟通能力 / 团队协作）—— 词典只收可判定的技术/工具/知识项。
+# ⚠️ aliases 可以为空列表：说明这个技能没有广泛认可的第二种写法，不是漏写。
+# ============================================================================
+
+version: 1
+updated_at: "2026-10-14"
+
+# category 的闭集（plan §4.4）。gen-seed.sh 用它校验每条的 category，避免手滑写错。
+categories:
+  - language     # 编程语言 / 运行时
+  - framework    # 后端框架与库
+  - db           # 数据库 / 存储
+  - middleware   # 中间件 / 网络协议与网络库
+  - frontend     # 前端框架与构建
+  - devops       # 部署 / 运维 / 可观测
+  - tool         # 工程工具与测试框架
+  - ai           # AI / LLM 相关
+
+skills:
+  # ---------------------------------------------------------------- language
+  - canonical: Java
+    category: language
+    aliases: [JDK, J2EE, JavaSE]
+  - canonical: JavaScript
+    category: language
+    aliases: [ECMAScript, ES6]
+  - canonical: TypeScript
+    category: language
+    aliases: []
+  - canonical: Python
+    category: language
+    aliases: [python3]
+  - canonical: Go
+    category: language
+    aliases: [Golang]
+  - canonical: C++
+    category: language
+    aliases: [CPP, "C/C++"]
+  - canonical: C
+    category: language
+    aliases: [ANSI C]
+  - canonical: C#
+    category: language
+    aliases: [CSharp, "C Sharp"]
+  - canonical: Kotlin
+    category: language
+    aliases: []
+  - canonical: Rust
+    category: language
+    aliases: [rust-lang]
+
+  # --------------------------------------------------------------- framework
+  - canonical: Spring Boot
+    category: framework
+    aliases: [SpringBoot]
+  - canonical: Spring Cloud
+    category: framework
+    aliases: [SpringCloud]
+  - canonical: Spring MVC
+    category: framework
+    aliases: [SpringMVC]
+  - canonical: Spring Security
+    category: framework
+    aliases: []
+  - canonical: MyBatis
+    category: framework
+    aliases: [ibatis]
+  - canonical: MyBatis-Plus
+    category: framework
+    aliases: [MyBatisPlus]
+  - canonical: Hibernate
+    category: framework
+    aliases: [JPA]
+  - canonical: Node.js
+    category: framework
+    aliases: [NodeJS]
+  - canonical: Koa
+    category: framework
+    aliases: [Koa2, koajs]
+  - canonical: Express
+    category: framework
+    aliases: [expressjs]
+  - canonical: NestJS
+    category: framework
+    aliases: [nest.js]
+  - canonical: Django
+    category: framework
+    aliases: [DRF]
+  - canonical: Flask
+    category: framework
+    aliases: []
+  - canonical: FastAPI
+    category: framework
+    aliases: [fast-api]
+  - canonical: Gin
+    category: framework
+    aliases: [gin-gonic]
+
+  # ---------------------------------------------------------------------- db
+  - canonical: MySQL
+    category: db
+    aliases: [MariaDB]
+  - canonical: PostgreSQL
+    category: db
+    aliases: [PG, postgres, pgsql]
+  - canonical: Oracle
+    category: db
+    aliases: [PL/SQL]
+  - canonical: SQL Server
+    category: db
+    aliases: [MSSQL, SQLServer]
+  - canonical: MongoDB
+    category: db
+    aliases: [mongo]
+  - canonical: Redis
+    category: db
+    aliases: []
+  - canonical: Elasticsearch
+    category: db
+    aliases: [ES]
+  - canonical: SQLite
+    category: db
+    aliases: [sqlite3]
+  - canonical: ClickHouse
+    category: db
+    aliases: []
+  - canonical: HBase
+    category: db
+    aliases: []
+
+  # -------------------------------------------------------------- middleware
+  # TCP/IP 与 libevent 归 middleware：category 闭集里没有「计算机基础 / 网络」这一项，
+  # 而这两者都是网络层的协议与库 —— 归 middleware 比归 tool 更贴切。
+  - canonical: Kafka
+    category: middleware
+    aliases: [Apache Kafka]
+  - canonical: RabbitMQ
+    category: middleware
+    aliases: [rabbit mq]
+  - canonical: RocketMQ
+    category: middleware
+    aliases: [Rocket MQ]
+  - canonical: Nginx
+    category: middleware
+    aliases: []
+  - canonical: ZooKeeper
+    category: middleware
+    aliases: [ZK]
+  - canonical: Netty
+    category: middleware
+    aliases: []
+  - canonical: gRPC
+    category: middleware
+    aliases: [Google RPC]
+  - canonical: Dubbo
+    category: middleware
+    aliases: []
+  - canonical: TCP/IP
+    category: middleware
+    aliases: [TCP, tcpip]
+  - canonical: libevent
+    category: middleware
+    aliases: []
+
+  # ---------------------------------------------------------------- frontend
+  - canonical: Vue
+    category: frontend
+    aliases: [Vue.js, vuejs, vue3, vue2]
+  - canonical: React
+    category: frontend
+    aliases: [React.js, reactjs]
+  - canonical: Angular
+    category: frontend
+    aliases: [AngularJS]
+  - canonical: Element Plus
+    category: frontend
+    aliases: [ElementPlus, element-ui]
+  - canonical: ECharts
+    category: frontend
+    aliases: [Apache ECharts]
+  - canonical: Vite
+    category: frontend
+    aliases: [vitejs]
+  - canonical: Webpack
+    category: frontend
+    aliases: [webpack5]
+  - canonical: HTML
+    category: frontend
+    aliases: [HTML5]
+  - canonical: CSS
+    category: frontend
+    aliases: [CSS3]
+  - canonical: Sass
+    category: frontend
+    aliases: [SCSS]
+  - canonical: Tailwind CSS
+    category: frontend
+    aliases: [tailwindcss]
+
+  # ------------------------------------------------------------------ devops
+  - canonical: Docker
+    category: devops
+    aliases: [Docker Compose]
+  - canonical: Kubernetes
+    category: devops
+    aliases: [K8s]
+  - canonical: Jenkins
+    category: devops
+    aliases: []
+  - canonical: GitHub Actions
+    category: devops
+    aliases: [github-actions]
+  - canonical: GitLab CI
+    category: devops
+    aliases: [gitlab-ci]
+  - canonical: Linux
+    category: devops
+    aliases: [CentOS, Ubuntu]
+  - canonical: Shell
+    category: devops
+    aliases: [Bash]
+  - canonical: Prometheus
+    category: devops
+    aliases: []
+  - canonical: Grafana
+    category: devops
+    aliases: []
+  - canonical: Ansible
+    category: devops
+    aliases: []
+
+  # -------------------------------------------------------------------- tool
+  - canonical: Git
+    category: tool
+    aliases: []
+  - canonical: Maven
+    category: tool
+    aliases: [MVN]
+  - canonical: Gradle
+    category: tool
+    aliases: []
+  - canonical: npm
+    category: tool
+    aliases: [pnpm, yarn]
+  - canonical: Postman
+    category: tool
+    aliases: []
+  - canonical: Jira
+    category: tool
+    aliases: []
+  - canonical: CMake
+    category: tool
+    aliases: []
+  - canonical: gtest
+    category: tool
+    aliases: [Google Test]
+  - canonical: JUnit
+    category: tool
+    aliases: [junit5]
+  - canonical: pytest
+    category: tool
+    aliases: []
+  - canonical: Swagger
+    category: tool
+    aliases: [OpenAPI, springdoc]
+
+  # ---------------------------------------------------------------------- ai
+  - canonical: LLM
+    category: ai
+    aliases: [大模型, 大语言模型]
+  - canonical: RAG
+    category: ai
+    aliases: [检索增强生成]
+  - canonical: Prompt Engineering
+    category: ai
+    aliases: [Prompt 工程, 提示词工程]
+  - canonical: LangChain
+    category: ai
+    aliases: []
+  - canonical: PyTorch
+    category: ai
+    aliases: []
+  - canonical: TensorFlow
+    category: ai
+    aliases: []

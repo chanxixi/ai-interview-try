@@ -1,0 +1,23 @@
+{
+  "code": "job-qa-01",
+  "title": "测试开发工程师",
+  "company": "某金融科技",
+  "level": "社招",
+  "category": "tech-qa",
+  "tags": ["自动化测试", "接口测试", "质量保障"],
+  "jdRaw": "岗位职责：\n1、负责核心业务的服务端测试方案设计与执行；\n2、建设接口自动化测试与回归测试体系；\n3、参与质量度量与缺陷分析，推动研发流程改进。\n\n任职要求：\n1、本科及以上学历，计算机相关专业；\n2、熟悉Java或Python，能独立编写自动化测试脚本；\n3、熟练使用JUnit或pytest编写单元测试与接口测试；\n4、熟悉Postman进行接口调试与用例管理；\n5、熟悉MySQL，能编写 SQL 进行数据校验；\n6、熟悉Linux常用命令与Shell脚本；\n7、熟悉Git与Jira等研发协作工具。\n\n加分项：\n1、熟悉Jenkins持续集成者优先；\n2、熟悉Docker容器化测试环境者优先。",
+  "requirements": [
+    { "skill": "Java", "importance": "required", "evidence": "熟悉Java或Python" },
+    { "skill": "Python", "importance": "required", "evidence": "熟悉Java或Python" },
+    { "skill": "JUnit", "importance": "required", "evidence": "熟练使用JUnit或pytest编写单元测试与接口测试" },
+    { "skill": "pytest", "importance": "required", "evidence": "熟练使用JUnit或pytest编写单元测试与接口测试" },
+    { "skill": "Postman", "importance": "required", "evidence": "熟悉Postman进行接口调试与用例管理" },
+    { "skill": "MySQL", "importance": "required", "evidence": "熟悉MySQL，能编写 SQL 进行数据校验" },
+    { "skill": "Linux", "importance": "required", "evidence": "熟悉Linux常用命令与Shell脚本" },
+    { "skill": "Shell", "importance": "required", "evidence": "熟悉Linux常用命令与Shell脚本" },
+    { "skill": "Git", "importance": "required", "evidence": "熟悉Git与Jira等研发协作工具" },
+    { "skill": "Jira", "importance": "required", "evidence": "熟悉Git与Jira等研发协作工具" },
+    { "skill": "Jenkins", "importance": "preferred", "evidence": "熟悉Jenkins持续集成者优先" },
+    { "skill": "Docker", "importance": "preferred", "evidence": "熟悉Docker容器化测试环境者优先" }
+  ]
+}

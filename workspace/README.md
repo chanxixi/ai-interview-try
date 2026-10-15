@@ -36,28 +36,27 @@ Vue 3 (web)  →  Node.js BFF (bff)  →  Java / Spring Boot (job-service)  → 
 
 ---
 
-## 3. 当前状态：**骨架阶段**
+## 3. 当前状态：**part1 骨架 + part2 全量实现**
 
-已完成（本阶段）：
+> 本文件只讲「怎么跑起来」。**每一层为什么这么做、哪里和文档不一样**，
+> 看 `DELIVERY.md`（§7 是偏离登记，时间紧就先看它）；
+> 单个服务的溯源地图（现象 → 看哪个文件）看各自的 `apps/*/README.md`。
 
-- [x] 四服务目录骨架，各自可独立启动
-- [x] 四个 `GET /healthz` 统一返回 `{"status":"ok"}`
-- [x] `GET /api/ping` 贯通链：Vue → BFF → job-service → analyzer
-- [x] traceId 全链透传（`X-Trace-Id`），并在响应头回写
-- [x] 结构化 JSON 日志
-- [x] 各层单元测试（analyzer 3 / job-service 2 / bff 8）
-- [x] BFF 侧超时与错误映射骨架（`503` / `504` / `500` 收口）
-- [x] `scripts/smoke.sh` 一键全链冒烟
+part2 已完成（M0–M8）：
 
-尚未开始（后续任务）：
+- [x] 契约先行：`contracts/*.yaml`（含 `x-api-conventions` / `x-api-inventory` / `x-code-delta`）
+- [x] 数据模型 6 张表 + 离线种子 `db/seed.sql`（`gen-seed.sh` 确定性生成，禁止手改）
+- [x] PDF 解析（pypdf）与清洗七步；真实样本 20/20 通过
+- [x] 归一化 / 加权匹配 / Top-N 推荐（打分公式只有一份实现，可手算复现）
+- [x] SSE 流式分析（6 事件 / 7 阶段 / 心跳）+ LLM 降级
+- [x] 前端 analyzer 页（Element Plus 主题定制 + ECharts 分数环 + 打字机思考台）
+- [x] 四层 CI（`.github/workflows/ci.yml`）+ 六条降级演练脚本
 
-- [ ] `contracts/` 三份 OpenAPI 契约（T1）
-- [ ] `POST /api/analysis` 竖切贯通（T3）
-- [ ] `/internal/analyze` 真实实现：清洗 / 归一化 / 匹配（T2、T5）
-- [ ] 岗位 JD 与技能词典领域 API（T4）
-- [ ] LLM 接入与降级（T5）
-- [ ] 前端结果可视化与组件库改造（T6）
-- [ ] Dockerfile / docker-compose / CI/CD（T7、T8）
+**尚未做**（见 `DELIVERY.md` §7）：
+
+- [ ] Dockerfile / docker-compose（part1 T7）
+- [ ] 启动 / 部署 / 回滚文档（part1 T8.3）
+- [ ] `/healthz.storage` 与三档自动降级（part1 AC9/AC10）—— 见 D-9
 
 ---
 
@@ -101,13 +100,24 @@ npm run dev
 
 ## 5. 验证链路
 
-### 5.1 一键冒烟（推荐）
+### 5.1 三个冒烟脚本（推荐）
 
 ```bash
-bash scripts/smoke.sh
+bash scripts/smoke.sh              # ① 骨架还活着吗：三个 /healthz + /api/ping 全链贯通
+bash scripts/smoke-stream.sh       # ② 正常路径：真发一次流式请求，按 SSE 契约逐条验
+bash scripts/drill-degradation.sh  # ③ 异常路径：六条降级演练（LLM 挂 / 假 PDF / 断连风暴…）
 ```
 
-检查健康检查、全链连通性与 traceId 回写；任一项失败会打印具体断点并返回非 0。
+三个脚本分工刻意不同 —— ①②③ 分别回答「活着吗 / 对了吗 / 坏了会怎样」。
+任一项失败都会打印具体断点并返回非 0。
+
+```bash
+SAMPLE_PDF=../脱敏资料/resume_01.pdf bash scripts/smoke-stream.sh   # 走 PDF 入口
+bash scripts/drill-degradation.sh 2 3                               # 只跑第 2、3 条演练
+```
+
+> `drill-degradation.sh` 需要 analyzer 的 `LLM_*` 环境变量**留空** ——
+> 第 1 条演练要的就是「LLM 不可用」这个状态。
 
 ### 5.2 手工验证
 
@@ -119,22 +129,29 @@ curl http://localhost:3000/healthz
 
 # 全链连通性（Vue 调的就是这个）
 curl -H 'X-Trace-Id: demo-trace-001' http://localhost:3000/api/ping
+
+# 流式分析（-N 关掉 curl 自己的缓冲，否则看不到逐帧到达）
+curl -N -H 'Accept: text/event-stream' \
+     -F 'resumeText=熟悉 Java、MySQL、Redis' \
+     http://localhost:3000/api/analysis/stream
 ```
 
-预期返回：四层服务的连通状态，且 `traceId` 全链一致。
-
-浏览器打开 http://localhost:5173 可看到连通性面板（前端自行生成 traceId 并逐跳展示）。
+浏览器打开 http://localhost:5173 → 首页是 **analyzer**（上传简历 / 粘贴文本 → 看阶段推进 → 看结果），
+顶栏「连通性」进 part1 的连通面板。
 
 ---
 
 ## 6. 测试
 
 ```bash
-cd apps/analyzer    && pytest
-cd apps/job-service && mvn test
-cd apps/bff         && npm test
-cd apps/web         && npm run type-check
+cd apps/analyzer    && ./.venv/Scripts/python.exe -m pytest   # 261 passed
+cd apps/job-service && mvn test                               # 18 passed
+cd apps/bff         && npm test                               # 52 passed
+cd apps/web         && npm test && npm run type-check         # 19 passed
 ```
+
+四层都**不依赖外部服务**：analyzer 的 LLM 有降级、job-service 用内嵌 H2、
+BFF 的下游在用例里被替换成 stub —— 所以 CI 里不需要 MySQL / Redis / 真 LLM。
 
 ---
 
@@ -143,14 +160,20 @@ cd apps/web         && npm run type-check
 ```
 workspace/
 ├─ apps/
-│  ├─ web/            Vue 3 前端（连通性面板）
-│  ├─ bff/            Node.js BFF（Koa2 + TS）
-│  ├─ job-service/    Java / Spring Boot
-│  └─ analyzer/       Python / FastAPI
+│  ├─ web/            Vue 3 前端（analyzer 分析页 + 连通性面板）
+│  ├─ bff/            Node.js BFF（Koa2 + TS）—— 校验 / 编排 / SSE 透传
+│  ├─ job-service/    Java / Spring Boot —— 岗位领域 API + 候选集装配
+│  └─ analyzer/       Python / FastAPI —— 解析 / 归一化 / 匹配 / 推荐 / LLM
+├─ contracts/         OpenAPI 契约（真源：frontend-bff.yaml 含 x-api-* 扩展）
+├─ db/                schema（mysql / h2）+ 岗位源 + 生成物 seed.sql
 ├─ scripts/
-│  └─ smoke.sh        全链冒烟
-├─ .env.example       环境变量模板（单点维护，四个服务共用）
-├─ .gitignore
+│  ├─ start-all.sh / stop-all.sh / demo.sh
+│  ├─ smoke.sh              全链冒烟
+│  ├─ smoke-stream.sh       流式契约冒烟
+│  ├─ drill-degradation.sh  六条降级演练（+ drill_degradation.py / drill_fixtures.py）
+│  └─ gen-seed.sh           离线种子编译器（+ gen_seed.py）
+├─ DELIVERY.md        交付说明：每层怎么做 + **§7 偏离登记**
+├─ AI_LOG.md          AI 协作留痕（人对 AI 产出改了什么、为什么）
 └─ README.md
 ```
 
@@ -167,9 +190,12 @@ workspace/
 | `JOB_SERVICE_PORT` | job-service 端口 | 8080 |
 | `ANALYZER_PORT` | analyzer 端口 | 8000 |
 | `BFF_URL` / `JOB_SERVICE_URL` / `ANALYZER_URL` | 服务发现 | `http://localhost:<port>` |
-| `JOB_SERVICE_TIMEOUT_MS` / `ANALYZER_TIMEOUT_MS` | 超时矩阵（plan.md §6.1） | 5000 / 45000 |
+| `JOB_SERVICE_TIMEOUT_MS` / `ANALYZER_TIMEOUT_MS` | 超时矩阵（plan.md §6.1） | 5000 / 110000 |
 | `LOG_LEVEL` | 日志级别 | info |
-| `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` | LLM 接入（T5）；三项留空即走规则降级 | 空 |
-| `STORAGE_MODE` / `MYSQL_*` | 存储策略（T4，spec.md §2.9） | `auto` |
+| `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` | LLM 接入；**三项任一留空即走规则降级**（`meta.degraded=true`） | 空 |
+| `JOB_DB_URL` | 数据源。留空 = H2 内存（零依赖）；指向 MySQL 即切主路径 | H2 |
+| `JOB_DB_DRIVER` / `JOB_DB_USER` / `JOB_DB_PASSWORD` / `JOB_DB_DIALECT` | 随 `JOB_DB_URL` 一起切（`DIALECT` 选 `h2` / `mysql` 的 schema 文件） | h2 / sa / 空 / h2 |
 
 > `.env` 已在 `.gitignore` 中，**密钥绝不入库**（spec.md §3.3）。
+> ⚠️ **没有** `STORAGE_MODE` 这个变量 —— part1 spec §2.9 的三档自动降级未实现，
+> 现状是「两档 + 部署期切换」，见 `DELIVERY.md` §7 **D-9**。

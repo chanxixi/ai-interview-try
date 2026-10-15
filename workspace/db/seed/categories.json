@@ -1,0 +1,20 @@
+{
+  "_note": "岗位分类树（D1：分类是数据不是代码）。新增一类岗位 = 在这里加一行 + 复跑 scripts/gen-seed.sh，不改表结构、不改 Java 代码。level 由 parent 链自动推导（不手写），sort 只影响同层展示顺序。",
+  "categories": [
+    { "code": "tech", "name": "技术", "parent": null, "sort": 10 },
+    { "code": "product", "name": "产品", "parent": null, "sort": 20 },
+    { "code": "operation", "name": "运营", "parent": null, "sort": 30 },
+    { "code": "finance", "name": "财务", "parent": null, "sort": 40 },
+    { "code": "marketing", "name": "市场", "parent": null, "sort": 50 },
+    { "code": "design", "name": "设计", "parent": null, "sort": 60 },
+
+    { "code": "tech-backend", "name": "后端开发", "parent": "tech", "sort": 10 },
+    { "code": "tech-frontend", "name": "前端开发", "parent": "tech", "sort": 20 },
+    { "code": "tech-fullstack", "name": "全栈开发", "parent": "tech", "sort": 30 },
+    { "code": "tech-algorithm", "name": "算法 / 数据", "parent": "tech", "sort": 40 },
+    { "code": "tech-qa", "name": "测试", "parent": "tech", "sort": 50 },
+    { "code": "tech-devops", "name": "运维 / DevOps", "parent": "tech", "sort": 60 },
+    { "code": "tech-mobile", "name": "客户端", "parent": "tech", "sort": 70 },
+    { "code": "tech-security", "name": "安全 / 风控", "parent": "tech", "sort": 80 }
+  ]
+}

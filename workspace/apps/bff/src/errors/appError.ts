@@ -46,6 +46,26 @@ export class AppError extends Error {
     return new AppError(504, 'UPSTREAM_TIMEOUT', `下游服务 ${service} 响应超时`);
   }
 
+  /**
+   * part2：上传文件超过上限。HTTP 413（part2 spec.md §2.5）。
+   *
+   * **必须在建流之前抛出** —— 一旦 SSE 头已经写出去，就只能靠 error 事件，
+   * 而 413 属于「客户端能直接修正」的错误，同步返回体验好得多（AC13）。
+   */
+  static fileTooLarge(maxMb = 10): AppError {
+    return new AppError(413, 'FILE_TOO_LARGE', `上传文件超过 ${maxMb} MB 上限`);
+  }
+
+  /**
+   * part2：文件类型不支持。HTTP 415（part2 spec.md §2.5）。
+   *
+   * 判据是 **magic number**（前 5 字节必须 `%PDF-`）而不是扩展名 ——
+   * MIME 与扩展名都是客户端给的，可以伪造（AC12 就是把 docx 改名成 .pdf 传上来）。
+   */
+  static unsupportedFileType(reason = '仅接受 PDF 文件'): AppError {
+    return new AppError(415, 'UNSUPPORTED_FILE_TYPE', reason);
+  }
+
   static serviceUnavailable(service: string): AppError {
     return new AppError(503, 'SERVICE_UNAVAILABLE', `下游服务 ${service} 暂时不可用`);
   }

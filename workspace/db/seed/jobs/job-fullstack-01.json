@@ -1,0 +1,21 @@
+{
+  "code": "job-fullstack-01",
+  "title": "全栈开发工程师（直播/视频方向）",
+  "company": "某直播平台",
+  "level": "校招",
+  "category": "tech-fullstack",
+  "tags": ["高并发", "分布式", "直播", "校招"],
+  "_note": "★ 本岗位用真实 JD（plan §4.6 的样例）。requirements 与 plan §4.6 逐条一致；evidence 必须能在 jdRaw 里逐字找到，gen-seed.sh 会校验并自动算 jd_offset。",
+  "jdRaw": "岗位职责：\n1、负责直播、视频、广告等核心业务的服务端设计与开发；\n2、参与高并发、低延迟场景下的系统架构设计与性能优化；\n3、与产品、前端、算法团队协作，完成从需求到上线的全流程交付；\n4、参与技术方案评审，沉淀通用组件与最佳实践。\n\n任职要求：\n1、本科及以上学历，计算机相关专业；\n2、熟悉C/C++/Java开发语言，具备良好的编程习惯与代码质量意识；\n3、熟悉Linux网络编程，理解进程、线程、内存与文件系统的基本原理；\n4、熟悉TCP/IP协议，掌握 epoll 等IO模型，了解常见的网络性能瓶颈；\n5、熟悉MySQL、Redis等存储系统，理解索引、事务与缓存的基本原理；\n6、熟悉Git、CMake、gtest等工具，具备工程化协作能力；\n7、具备良好的沟通能力与团队协作意识，能承受一定的工作压力。\n\n加分项：\n1、有libevent/muduo等网络库使用经验者优先；\n2、具备LLM大语言模型知识，有 RAG 或 Agent 相关实践经验者优先；\n3、具备AI Coding经验者优先。",
+  "requirements": [
+    { "skill": "C++", "importance": "required", "evidence": "熟悉C/C++/Java开发语言" },
+    { "skill": "Java", "importance": "required", "evidence": "熟悉C/C++/Java开发语言" },
+    { "skill": "Linux", "importance": "required", "evidence": "熟悉Linux网络编程" },
+    { "skill": "TCP/IP", "importance": "required", "evidence": "熟悉TCP/IP协议，掌握 epoll 等IO模型" },
+    { "skill": "MySQL", "importance": "required", "evidence": "熟悉MySQL、Redis等存储系统" },
+    { "skill": "Redis", "importance": "required", "evidence": "熟悉MySQL、Redis等存储系统" },
+    { "skill": "Git", "importance": "required", "evidence": "熟悉Git、CMake、gtest等工具" },
+    { "skill": "LLM", "importance": "preferred", "evidence": "具备LLM大语言模型知识" },
+    { "skill": "libevent", "importance": "preferred", "evidence": "有libevent/muduo等网络库使用经验者优先" }
+  ]
+}

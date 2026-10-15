@@ -4,3 +4,23 @@ pydantic==2.10.4
 pydantic-settings==2.7.0
 httpx==0.28.1
 pytest==8.3.4
+
+# ---- part2 新增（M2.1）----
+
+# PDF 解析。ADR-103 冻结 pypdf：纯 Python、零编译依赖，受限网络下装包最稳。
+# **只有 service/pdf_parser.py 能 import 它**（plan §7 的「唯一职责文件」）；
+# 样本排版乱序时的备选是 pdfplumber，换库只改那一个文件。
+pypdf==5.1.0
+
+# YAML 解析。两处用：
+#   ① 运行期 service/normalizer.py 读 app/data/skills.yaml（技能词典真源，C4）
+#   ② 构建期 scripts/gen_seed.py 读同一份词典生成 seed.sql
+# 显式声明而不是蹭 uvicorn[standard] 的传递依赖 —— 那是巧合，不是契约。
+PyYAML==6.0.3
+
+# ---- part2 新增（M4.6）----
+
+# multipart/form-data 解析。`api/v1/stream.py` 的上传入参是 `Form(...)` + `UploadFile`，
+# FastAPI 没有它连路由都注册不上（报 "Form data requires python-multipart"）。
+# 与 BFF 侧选 @koa/multer 是同一个理由：上传是 part2 的入口，必须有明确的解析器。
+python-multipart==0.0.20

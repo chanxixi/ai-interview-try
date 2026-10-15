@@ -1,0 +1,64 @@
+@use 'sass:color';
+
+/**
+ * Element Plus 主题定制（tasks.md M7.1 / ADR-107）。
+ *
+ * <h2>为什么要有这个文件</h2>
+ * 直接用 Element Plus 的默认主题 = 一眼可辨的「组件库默认蓝」（`#409eff`）。
+ * 需求方给的是**定制**主题，所以这里把品牌主色换掉，并把 Element 依赖的
+ * 派生色阶（`light-1..9` / `dark-2`）一并算出来 —— 只改 `--el-color-primary`
+ * 会导致 hover / disabled / plain 按钮的底色仍然是蓝色，反而更花。
+ *
+ * <h2>为什么不 `@use 'element-plus/theme-chalk/src/index.scss' with (...)`</h2>
+ * 那条路要在 SCSS 编译期重算**整套** theme-chalk（几百个变量、几十秒编译），
+ * 而 Element Plus 2.x 的所有颜色都已经是 **CSS 变量**：
+ * 在 `:root` 上覆盖同名变量，效果一样，编译代价接近零，也不必把
+ * element-plus 的源码路径暴露给 sass 的 loadPaths。
+ * 代价：变量名与 Element 内部命名耦合（升级大版本要复查一次）。
+ */
+
+// 品牌主色：深青（teal-600）。刻意避开 Element 默认的 #409eff 与常见的
+// 蓝紫渐变 —— 既满足「不用默认蓝」，也和「简历 / 招聘」的冷静调性一致。
+$brand-primary: #0d9488;
+
+:root {
+  --el-color-primary: #{$brand-primary};
+
+  // Element 的派生色阶 = 主色与白/黑按比例混合。用循环生成，
+  // 避免手抄 9 个近似色值（手抄必然出现某一档偏色）。
+  @for $i from 1 through 9 {
+    --el-color-primary-light-#{$i}: #{color.mix(#fff, $brand-primary, $i * 10%)};
+  }
+  --el-color-primary-dark-2: #{color.mix(#000, $brand-primary, 20%)};
+
+  // 圆角与字体：默认 4px 圆角偏「后台系统」，这里统一放大一档
+  --el-border-radius-base: 8px;
+  --el-font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', sans-serif;
+}
+
+/**
+ * 页面局部微调 —— 只做 Element 组件本身不提供的视觉，不覆盖它的行为。
+ */
+
+// 上传拖拽区：默认虚线边框太浅，在浅灰底上几乎看不见
+.analyzer-upload .el-upload-dragger {
+  padding: 28px 20px;
+  border-width: 1.5px;
+  border-style: dashed;
+}
+
+// 阶段进度条：横向 7 步在窄屏会挤成一团，允许横向滚动而不是换行错位
+.analyzer-stages .el-steps {
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+// 思考控制台：等宽字体 + 保留换行，读 LLM 增量更稳
+.thinking-console {
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

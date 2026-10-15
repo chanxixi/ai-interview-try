@@ -1,7 +1,9 @@
 import { createJobServiceClient } from './client/jobService.client';
+import { AnalysisController } from './controller/analysis.controller';
 import { HealthController } from './controller/health.controller';
 import { JobController } from './controller/job.controller';
 import { createJobService } from './service/job.service';
+import { createAnalysisDeps } from './service/analysis.stream.deps';
 
 /**
  * ★ **组合根（composition root）** —— 全项目**唯一** `new` 具体实现的地方。
@@ -24,12 +26,16 @@ export function buildContainer() {
   // ② 业务层：只依赖适配器接口
   const jobService = createJobService({ jobService: jobServiceClient });
 
+  // ②′ part2：流式分析的依赖 —— **只指向 Java**（C3 严格线性，BFF 禁止直连 Python）
+  const analysisDeps = createAnalysisDeps();
+
   // ③ 控制层：只依赖业务层
   return {
     jobServiceClient,
     controllers: {
       health: new HealthController(),
       job: new JobController(jobService),
+      analysis: new AnalysisController(analysisDeps),
     },
   };
 }

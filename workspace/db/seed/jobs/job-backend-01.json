@@ -1,0 +1,23 @@
+{
+  "code": "job-backend-01",
+  "title": "Java 后端开发工程师",
+  "company": "某电商科技",
+  "level": "社招",
+  "category": "tech-backend",
+  "tags": ["高并发", "微服务", "分布式"],
+  "jdRaw": "岗位职责：\n1、负责公司核心业务系统的后端设计与开发，保障服务稳定性；\n2、参与微服务拆分与治理，持续优化接口性能与数据库访问效率；\n3、编写单元测试与技术文档，参与代码评审。\n\n任职要求：\n1、本科及以上学历，计算机相关专业；\n2、精通Java，熟悉JVM内存模型与垃圾回收机制；\n3、熟练使用Spring Boot、MyBatis进行业务开发；\n4、了解Spring Cloud微服务生态；\n5、熟悉MySQL，具备索引设计与慢查询优化经验；\n6、熟悉Redis，了解缓存穿透、击穿、雪崩的应对方案；\n7、熟悉Kafka等消息中间件，理解异步解耦与削峰填谷；\n8、熟悉Linux常用命令，能独立完成服务部署与问题排查；\n9、熟悉Git协作流程与Maven构建。\n\n加分项：\n1、熟悉Docker与Kubernetes，有容器化部署经验者优先；\n2、有高并发项目经验者优先。",
+  "requirements": [
+    { "skill": "Java", "importance": "required", "evidence": "精通Java，熟悉JVM内存模型与垃圾回收机制" },
+    { "skill": "Spring Boot", "importance": "required", "evidence": "熟练使用Spring Boot、MyBatis进行业务开发" },
+    { "skill": "MyBatis", "importance": "required", "evidence": "熟练使用Spring Boot、MyBatis进行业务开发" },
+    { "skill": "Spring Cloud", "importance": "preferred", "evidence": "了解Spring Cloud微服务生态" },
+    { "skill": "MySQL", "importance": "required", "evidence": "熟悉MySQL，具备索引设计与慢查询优化经验" },
+    { "skill": "Redis", "importance": "required", "evidence": "熟悉Redis，了解缓存穿透、击穿、雪崩的应对方案" },
+    { "skill": "Kafka", "importance": "required", "evidence": "熟悉Kafka等消息中间件" },
+    { "skill": "Linux", "importance": "required", "evidence": "熟悉Linux常用命令" },
+    { "skill": "Git", "importance": "required", "evidence": "熟悉Git协作流程与Maven构建" },
+    { "skill": "Maven", "importance": "required", "evidence": "熟悉Git协作流程与Maven构建" },
+    { "skill": "Docker", "importance": "preferred", "evidence": "熟悉Docker与Kubernetes，有容器化部署经验者优先" },
+    { "skill": "Kubernetes", "importance": "preferred", "evidence": "熟悉Docker与Kubernetes，有容器化部署经验者优先" }
+  ]
+}

@@ -52,7 +52,10 @@ describe('unit · mapUpstreamError（下游表现 → 对外错误码）', () =>
     expect(mapped.message).not.toContain('raw stack');
   });
 
-  it('错误码表与 spec.md §2.3 完全一致（冻结清单）', () => {
+  it('错误码表与 spec §2.3 + part2 §2.5 完全一致（冻结清单）', () => {
+    // part2 新增三个：
+    //   FILE_TOO_LARGE / UNSUPPORTED_FILE_TYPE —— 上传准入，建流前的同步错误（§2.5）
+    //   STREAM_ABORTED                        —— 断连，**仅日志**（§2.5 明确不进响应体）
     expect([...ERROR_CODES].sort()).toEqual(
       [
         'INVALID_INPUT',
@@ -63,6 +66,9 @@ describe('unit · mapUpstreamError（下游表现 → 对外错误码）', () =>
         'SERVICE_UNAVAILABLE',
         'UPSTREAM_TIMEOUT',
         'INTERNAL_ERROR',
+        'FILE_TOO_LARGE',
+        'UNSUPPORTED_FILE_TYPE',
+        'STREAM_ABORTED',
       ].sort(),
     );
   });

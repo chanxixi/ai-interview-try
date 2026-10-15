@@ -1,97 +1,53 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
-
-import { ApiRequestError, fetchPingChain } from './api/client';
-import ChainPanel from './components/ChainPanel.vue';
-import { buildChain, type ChainHop } from './utils/chain';
-
-type Phase = 'idle' | 'loading' | 'done' | 'failed';
-
-interface FailureView {
-  code: string;
-  message: string;
-  traceId?: string;
-}
-
-const phase = ref<Phase>('idle');
-const hops = ref<ChainHop[]>([]);
-const traceId = ref('');
-const failure = ref<FailureView | null>(null);
-const raw = ref('');
-
-const allReachable = computed(
-  () => hops.value.length > 0 && hops.value.every((hop) => hop.status === 'ok'),
-);
+import zhCn from 'element-plus/es/locale/lang/zh-cn';
+import { computed } from 'vue';
+import { useRoute } from 'vue-router';
 
 /**
- * 运行全链连通性检查。
+ * 应用外壳 —— 只负责**顶栏 + 路由出口**。
  *
- * traceId 由**前端生成**：能原样出现在每一跳的响应里，就说明
- * Vue → BFF → job-service → analyzer 的透传链是通的（spec.md §2.8）。
+ * part1 的连通性自检已迁到 `pages/connectivity`，这里不再承载业务逻辑，
+ * 页面各自的状态收在各自页面内（互不污染，也方便按页拆包）。
+ *
+ * `<el-config-provider :locale>` 是**按需引入模式下**注入语言包的正规做法
+ * （`main.ts` 里不再 `app.use(ElementPlus)`，拿不到插件级的 locale 选项）。
  */
-async function runCheck(): Promise<void> {
-  phase.value = 'loading';
-  failure.value = null;
-  raw.value = '';
+const route = useRoute();
 
-  const clientTraceId = crypto.randomUUID();
-
-  try {
-    const result = await fetchPingChain(clientTraceId);
-    hops.value = buildChain(result.data, clientTraceId);
-    traceId.value = result.traceId;
-    raw.value = JSON.stringify(result.data, null, 2);
-    phase.value = 'done';
-  } catch (error) {
-    hops.value = [];
-    phase.value = 'failed';
-
-    if (error instanceof ApiRequestError) {
-      failure.value = { code: error.code, message: error.message, traceId: error.traceId };
-      traceId.value = error.traceId ?? clientTraceId;
-    } else {
-      // 连 BFF 都没连上：这不是业务错误，是环境问题，单独提示
-      failure.value = { code: 'NETWORK_ERROR', message: '无法连接 BFF，请确认服务已启动' };
-      traceId.value = clientTraceId;
-    }
-  }
-}
+const activePath = computed(() => route.path);
 </script>
 
 <template>
-  <main class="page">
-    <header class="page__head">
-      <p class="page__eyebrow">CareerLens · 骨架阶段</p>
-      <h1 class="page__title">全链连通性自检</h1>
-      <p class="page__desc">
-        验证 <strong>Vue → BFF → job-service → analyzer</strong> 四层是否可达、traceId 是否全链贯穿。
-        本页只做连通性诊断，简历分析界面在后续阶段接入。
-      </p>
-    </header>
+  <el-config-provider :locale="zhCn">
+    <div class="app">
+      <header class="app__bar">
+        <div class="app__brand">
+          <span class="app__logo" aria-hidden="true">CL</span>
+          <div>
+            <p class="app__name">CareerLens</p>
+            <p class="app__sub">简历诊断 · 岗位匹配</p>
+          </div>
+        </div>
 
-    <section class="actions">
-      <button type="button" class="btn" :disabled="phase === 'loading'" @click="runCheck">
-        {{ phase === 'loading' ? '检测中…' : '运行连通性检查' }}
-      </button>
-      <span
-        v-if="phase === 'done'"
-        class="actions__hint"
-        :class="allReachable ? 'is-ok' : 'is-warn'"
-      >
-        {{ allReachable ? '四层全部可达' : '存在不可达的跳，见下方详情' }}
-      </span>
-    </section>
+        <nav class="app__nav">
+          <RouterLink
+            class="app__link"
+            :class="{ 'is-active': activePath.startsWith('/analyzer') }"
+            to="/analyzer"
+          >
+            简历分析
+          </RouterLink>
+          <RouterLink
+            class="app__link"
+            :class="{ 'is-active': activePath.startsWith('/connectivity') }"
+            to="/connectivity"
+          >
+            全链自检
+          </RouterLink>
+        </nav>
+      </header>
 
-    <p v-if="phase === 'failed' && failure" class="alert">
-      <strong>{{ failure.code }}</strong>
-      <span>{{ failure.message }}</span>
-    </p>
-
-    <ChainPanel v-if="hops.length" :hops="hops" :trace-id="traceId" />
-
-    <details v-if="raw" class="raw">
-      <summary>原始响应</summary>
-      <pre class="mono">{{ raw }}</pre>
-    </details>
-  </main>
+      <RouterView />
+    </div>
+  </el-config-provider>
 </template>

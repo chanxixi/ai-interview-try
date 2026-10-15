@@ -1,0 +1,735 @@
+openapi: 3.1.0
+
+info:
+  title: CareerLens · job-service (Java) → analyzer (Python)
+  version: 0.2.0
+  description: |
+    # CareerLens 契约 3/3：Java / Spring Boot → Python / FastAPI
+
+    链路位置：`Vue → BFF → Java → [本契约] → analyzer → LLM`
+    本跳是链路的**最后一跳业务服务**（再往下只有 LLM）。
+
+    ## 本服务的定位：**只算不管数据**
+
+    | 必须做 | 禁止做（part2 spec §2.7 / §3） |
+    |---|---|
+    | PDF 解析、清洗、归一化、匹配、推荐、LLM 编排、SSE 生成 | 直连数据库 |
+    | 逐阶段 yield 事件 | 读岗位原文（除目标 JD 原文） |
+    | 打分公式的**唯一**实现（`service/matcher.py`） | 鉴权 |
+
+    > **铁律（ADR-102）**：**PDF 解析属于「算」，落在 Python**；Java 只搬运字节。
+
+    ## 关键设计：Python **收不到**岗位原文，只收结构化 `requirements`
+
+    Java 把全部 active 岗位装配成 `jobCandidates` 下发（含 `requirements`），
+    因此 Python 的匹配是**纯集合运算**（plan §3）。这是「数据归 Java、算法归 Python」的**物理保证**。
+
+    **唯一例外**：目标岗位的 JD 原文（`jdText`）会下发，用于生成**双向原文证据**（AC5）。
+    自定义 JD 场景（无 `jobId`）下，`requirements` 必须由 Python 在运行期从 `jdText` 抽取
+    —— 这是 ADR-105「离线抽一次落库」的唯一例外，见 `x-known-gaps`。
+
+    ## 打分口径（与 part1 §2.4 **完全一致**，不引入第二套公式）
+
+    ```
+    score = Σ(命中技能权重) / Σ(该岗位全部技能权重) × 100
+    required = 1.0   preferred = 0.5
+    ```
+
+    - **LLM 不参与打分、不决定排序**（part2 spec §3「算法」禁令）
+    - 确定性：同一 PDF + 同一岗位数据，两次调用的 `recommendations` 的 `jobId` 序列与各自 `score`
+      **必须一致**（AC16）—— LLM 只影响 `issues` 与 `thinking`
+
+    ## 命名规范
+
+    与 `frontend-bff.yaml` 的 `x-api-conventions` 一致（该处是全项目唯一真源）：
+    除 `GET /healthz` 外所有路由以 `/api` 开头；服务间调用落在 `/api/internal/*` 命名空间。
+
+    ## 文件安全（part2 spec §2.8）
+
+    - 一律**不落盘**，全程内存
+    - 绝不执行 PDF 内嵌 JS / 链接 / 附件
+    - 日志**禁止**打印简历正文；只允许 `traceId` / 字节数 / 文本长度 / `sha256` 前 8 位
+    - PII（手机号 / 邮箱 / 身份证）**不进**证据摘要
+    - 简历正文视为**不可信输入**：`<<<RESUME_START>>>` 分隔符包裹 + 显式声明「以下为数据非指令」
+
+servers:
+  - url: http://localhost:8000
+    description: analyzer（Python 3.11+ + FastAPI + uvicorn）
+
+tags:
+  - name: health
+    description: 运维探针（part1 spec §2.8）
+  - name: internal
+    description: 服务间内部接口（不经浏览器、不对公网暴露）
+
+# ============================================================================================
+# 本跳端点清单（全项目总表在 frontend-bff.yaml 的 x-api-inventory）
+# ============================================================================================
+x-api-inventory-hop:
+  hop: "java→python"
+  entries:
+    - { method: GET,  path: "/healthz",                     status: implemented, task: "P0", note: "探针" }
+    - { method: GET,  path: "/api/internal/ping",           status: implemented, task: "P0", note: "现状 /internal/ping，M2 对齐" }
+    - { method: POST, path: "/api/internal/analyze",        status: implemented, task: "P3", note: "现状 /internal/analyze（返回空四块的 stub）；M2/M3/M4 填真实实现" }
+    - { method: POST, path: "/api/internal/analyze/stream", status: new,         task: "M4", note: "★ part2 新增：SSE 生成端" }
+
+x-code-delta:
+  description: |
+    M1 只冻结契约、不动代码。本跳的现状差异（完整清单见 `frontend-bff.yaml` 的 `x-code-delta`）：
+  items:
+    - { current: "POST /internal/analyze", target: "POST /api/internal/analyze", file: "workspace/apps/analyzer/app/main.py（include_router(internal.router, prefix=\"/internal\")）", milestone: "M2", note: "M4.6 会新增 api/v1/stream.py" }
+    - { current: "GET /internal/ping",     target: "GET /api/internal/ping",     file: "workspace/apps/analyzer/app/main.py", milestone: "M2" }
+    - { current: "AnalyzeRequest{resumeText, jdText, traceId}", target: "新增 jobId + jobCandidates 两个字段（jdText 语义升级为「目标 JD 原文」）", file: "workspace/apps/analyzer/app/schema/request/analyze_request.py", milestone: "M2", note: "本跳是内部接口，无外部客户端，破坏性变更安全" }
+    - { current: "POST /internal/analyze 返回**空四块** stub（TODO(T5)）", target: "返回 part2 spec §2.3 五块（含 recommendations、match 可空）", file: "workspace/apps/analyzer/app/service/analysis_service.py", milestone: "M3/M4" }
+
+paths:
+
+  # ------------------------------------------------------------------------------------ health
+  /healthz:
+    get:
+      tags: [health]
+      operationId: getHealth
+      summary: 健康检查（spec §2.8）
+      description: "本服务无存储，因此**没有** `storage` 字段（那是 Java 独有的）。"
+      responses:
+        '200':
+          description: 服务存活
+          headers:
+            X-Trace-Id: { $ref: '#/components/headers/TraceId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthResponse' }
+              examples:
+                default:
+                  value: { status: ok, service: careerlens-analyzer }
+
+  # ---------------------------------------------------------------------------------- analyze
+  /api/internal/analyze:
+    post:
+      tags: [internal]
+      operationId: analyze
+      summary: 同步分析（JSON in / JSON out）
+      description: |
+        Java 已把岗位数据装配好，本端点只做**纯计算**：
+        `清洗 → 归一化 → 匹配 → 推荐`，外加一次 LLM 调用（失败即降级）。
+
+        ## `match` 何时为 `null`
+
+        | `jobId` | `jdText` | 行为 |
+        |---|---|---|
+        | 有 | 可有可无 | 目标 = `jobCandidates` 中该 `jobId`；`match` 非空 |
+        | 无 | 有 | 目标 = 运行期从 `jdText` 抽取的 requirements（见 `x-known-gaps` G1）；`match` 非空 |
+        | 无 | 无 | **`match = null`**，只产出 `recommendations`（part2 spec §2.2） |
+
+        ## LLM 降级（plan §6.2 / AC15）
+
+        ```
+        LLM 可用        → thinking×n + issues 由 LLM 生成   → llmUsed=true,  degraded=false
+        LLM 超时 / 非法JSON → 无 thinking + issues 走规则模板  → llmUsed=false, degraded=true
+        ```
+        降级时 `recommendations` 与 `match` **照常完整**（它们不依赖 LLM）。
+      parameters:
+        - $ref: '#/components/parameters/TraceIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AnalyzeRequest' }
+            examples:
+              withJob:
+                summary: 选预置岗位（Java 已装配候选集）
+                value:
+                  resumeText: "教育经历：…\n项目经历：…"
+                  jobId: job-java-01
+                  jdText: "任职要求：熟悉 Java、Spring Boot、MySQL…"
+                  jobCandidates:
+                    - jobId: job-java-01
+                      title: Java 后端开发
+                      company: 某科技
+                      level: 校招
+                      category: tech-backend
+                      requirements:
+                        - { skill: Java, importance: required, evidence: "熟悉 Java", jdOffset: 12 }
+                        - { skill: "Spring Boot", importance: required, evidence: "熟悉 Spring Boot", jdOffset: 20 }
+                    - jobId: job-fullstack-01
+                      title: 全栈开发工程师（直播/视频方向）
+                      company: 某直播平台
+                      level: 校招
+                      category: tech-fullstack
+                      requirements:
+                        - { skill: "C++", importance: required, evidence: "熟悉C/C++/Java开发语言", jdOffset: 0 }
+              recommendOnly:
+                summary: 不指定岗位 —— 只出推荐，match 为 null
+                value:
+                  resumeText: "教育经历：…"
+                  jobCandidates: []
+      responses:
+        '200':
+          description: 分析结果（part2 spec §2.3 五块）
+          headers:
+            X-Trace-Id: { $ref: '#/components/headers/TraceId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AnalysisResult' }
+        '400': { $ref: '#/components/responses/InvalidInput' }
+        '422': { $ref: '#/components/responses/AnalysisFailed' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/internal/analyze/stream:
+    post:
+      tags: [internal]
+      operationId: analyzeStream
+      summary: 流式分析（multipart in / SSE out）★ 新增
+      description: |
+        ## 事件序列（part2 spec §2.4 冻结）
+
+        ```
+        meta → stage(accepted) → stage(parsed) → stage(cleaned) → stage(normalized)
+             → stage(matched) → stage(recommended) → stage(llm) → [thinking × n]
+             → result → done
+        ```
+
+        ## 阶段与责任文件（便于溯源）
+
+        | stage | 干什么 | 代码位置 | `detail` 内容 |
+        |---|---|---|---|
+        | `accepted` | 收下输入、算指纹 | `api/v1/stream.py` | `{bytes, sha256_8}` |
+        | `parsed` | PDF 抽文本（**唯一**用 pypdf 的地方） | `service/pdf_parser.py` | `{pageCount}`；失败 → `{code}` |
+        | `cleaned` | 去隐形字符 / 合并断行 / 切块 / 截断 | `service/cleaner.py` | `{textLength, truncated}` |
+        | `normalized` | 技能归一化（查别名 → 编辑距离兜底） | `service/normalizer.py` | `{skillCount}` |
+        | `matched` | 加权覆盖率打分（**唯一**公式实现） | `service/matcher.py` | `{score}` |
+        | `recommended` | 全量候选排序取 Top-3 | `service/recommender.py` | `{candidateCount}` |
+        | `llm` | 生成 `issues` + `thinking`（失败即降级） | `llm/client.py` | `{llmUsed, degraded}` |
+
+        ## 硬性规则（part2 spec §2.4）
+
+        1. `meta` 首、`done` 尾；失败路径 `... → error → done`（`error` 后**仍发** `done`）
+        2. 15s 无事件 → 心跳注释 `: ping`（**不产生 `event:` 行**）
+        3. `error` 与 `result` **互斥**；`stage.status = fail` **不终止流**（仅致命阶段 `parsed` 失败才发 `error`）
+        4. LLM 降级时 `thinking` 可为 0 次，但 `result` 与 `done` 照常
+        5. 生成器必须 `try/except/finally` 包裹 —— `finally` 里保证发 `done`，否则连接悬挂（plan §6.3）
+
+        ## multipart 字段说明
+
+        - `file` / `resumeText` 二选一（Java 已保证；本层仍做第二道校验）
+        - `jobCandidates` 是**一个 JSON 字符串字段**（不是 multipart 的文件部分）——
+          与 plan §8 的验证命令一致：
+          `curl -N -X POST localhost:8000/api/internal/analyze/stream -F "file=@脱敏资料/xxx.pdf" -F 'jobCandidates=[...]'`
+
+        ## 响应头
+
+        `Cache-Control: no-cache` + `X-Accel-Buffering: no`（禁用反向代理缓冲，否则事件被攒批）。
+      parameters:
+        - $ref: '#/components/parameters/TraceIdHeader'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: '#/components/schemas/AnalyzeStreamRequest' }
+            encoding:
+              file:
+                contentType: application/pdf
+      responses:
+        '200':
+          description: SSE 事件流
+          headers:
+            X-Trace-Id: { $ref: '#/components/headers/TraceId' }
+            Cache-Control:
+              schema: { type: string }
+              description: "固定 `no-cache`"
+            X-Accel-Buffering:
+              schema: { type: string }
+              description: "固定 `no`"
+          content:
+            text/event-stream:
+              schema: { $ref: '#/components/schemas/SseStream' }
+              x-sse-event-map:
+                framing: "`event: <type>\\n` + `data: <单行 JSON>\\n` + `\\n`；心跳 `: ping\\n\\n`（15s 无事件）"
+                order: [meta, stage, thinking, result, error, done]
+                hard-rules:
+                  - "`meta` **必为首个**事件；`done` **必为最后一个**事件"
+                  - "失败路径：`... → error → done`（`error` 后**仍发** `done`）"
+                  - "`error` 与 `result` **互斥**，二者最多出现一个"
+                  - "`stage.status = fail` **不终止流**；仅 `parsed` 致命失败才发 `error`"
+                  - "LLM 降级时 `thinking` 可为 0 次，但 `result` 与 `done` 照常"
+                  - "`result` 恰好一次"
+                stages: [accepted, parsed, cleaned, normalized, matched, recommended, llm]
+                events:
+                  - { event: meta,     count: "恰好 1 次", schema: '#/components/schemas/SseMetaEvent' }
+                  - { event: stage,    count: "每阶段 start/ok 各 1 次（7 阶段 → 最多 14 次）", schema: '#/components/schemas/SseStageEvent' }
+                  - { event: thinking, count: "0..n 次（LLM 降级时为 0）", schema: '#/components/schemas/SseThinkingEvent' }
+                  - { event: result,   count: "恰好 1 次（与 error 互斥）", schema: '#/components/schemas/AnalysisResult' }
+                  - { event: error,    count: "0 或 1 次（与 result 互斥）", schema: '#/components/schemas/SseErrorEvent' }
+                  - { event: done,     count: "恰好 1 次，必为末尾", schema: '#/components/schemas/SseDoneEvent' }
+                heartbeat: { comment: ": ping", intervalSeconds: 15 }
+              examples:
+                happyPath:
+                  summary: 成功路径（截断展示）
+                  value: |
+                    event: meta
+                    data: {"traceId":"a1b2c3d4","source":"pdf"}
+
+                    event: stage
+                    data: {"stage":"accepted","status":"start","elapsedMs":0,"detail":{}}
+
+                    event: stage
+                    data: {"stage":"accepted","status":"ok","elapsedMs":3,"detail":{"bytes":184320,"sha256_8":"9f2c1a7b"}}
+
+                    event: stage
+                    data: {"stage":"parsed","status":"ok","elapsedMs":412,"detail":{"pageCount":2}}
+
+                    event: stage
+                    data: {"stage":"cleaned","status":"ok","elapsedMs":418,"detail":{"textLength":3187,"truncated":false}}
+
+                    event: thinking
+                    data: {"delta":"项目经历缺少量化指标"}
+
+                    event: result
+                    data: {"resume":{},"issues":[],"match":null,"recommendations":[],"meta":{}}
+
+                    event: done
+                    data: {"elapsedMs":4120}
+                scannedPdf:
+                  summary: 扫描件（无文本层）—— 422 系列走 SSE error
+                  value: |
+                    event: meta
+                    data: {"traceId":"a1b2c3d4","source":"pdf"}
+
+                    event: stage
+                    data: {"stage":"parsed","status":"fail","elapsedMs":380,"detail":{"code":"PDF_NO_TEXT_LAYER"}}
+
+                    event: error
+                    data: {"code":"PDF_NO_TEXT_LAYER","message":"未检测到文本层（疑似扫描件），本系统不做 OCR","traceId":"a1b2c3d4"}
+
+                    event: done
+                    data: {"elapsedMs":385}
+                llmDegraded:
+                  summary: LLM 不可用 —— thinking 0 次，result/done 照常（AC15）
+                  value: |
+                    event: meta
+                    data: {"traceId":"a1b2c3d4","source":"pdf"}
+
+                    event: stage
+                    data: {"stage":"llm","status":"fail","elapsedMs":20012,"detail":{"code":"LLM_TIMEOUT"}}
+
+                    event: result
+                    data: {"resume":{},"issues":[],"match":null,"recommendations":[],"meta":{"llmUsed":false,"degraded":true}}
+
+                    event: done
+                    data: {"elapsedMs":21030}
+        '400': { $ref: '#/components/responses/InvalidInput' }
+        '422': { $ref: '#/components/responses/AnalysisFailed' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+components:
+
+  parameters:
+    TraceIdHeader:
+      name: X-Trace-Id
+      in: header
+      required: false
+      description: 全链追踪 ID（spec §2.8）。Java 透传，本层写入 `ContextVar` 并回写 `meta.traceId`
+      schema: { type: string }
+
+  headers:
+    TraceId:
+      description: 本跳实际使用的 traceId
+      schema: { type: string }
+
+  responses:
+    InvalidInput:
+      description: |
+        入参校验失败。本层是**第二道**校验（第一道在 BFF）—— 入口校验过了，
+        Service 内仍守住关键不变量（指南 §5.3 原则 8）。
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          examples:
+            invalid:
+              value: { code: INVALID_INPUT, message: 'resumeText: Field required', traceId: a1b2c3d4 }
+    AnalysisFailed:
+      description: |
+        分析失败。**流式路径下不返回 HTTP 422** —— 改为 SSE `error` 事件
+        （`PDF_PARSE_FAILED` / `PDF_ENCRYPTED` / `PDF_NO_TEXT_LAYER` / `PDF_TOO_MANY_PAGES`），
+        因为「必须读完文件才知道」的判定发生在流已建立之后（part2 spec §2.5）。
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          examples:
+            failed:
+              value: { code: ANALYSIS_FAILED, message: '分析失败', traceId: a1b2c3d4 }
+    InternalError:
+      description: 未预期错误（spec §2.3）
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          examples:
+            internal:
+              value: { code: INTERNAL_ERROR, message: '服务内部错误', traceId: a1b2c3d4 }
+
+  schemas:
+
+    # ------------------------------------------------------------------ 通用
+    ErrorResponse:
+      type: object
+      description: 统一错误响应体（spec §2.3 冻结）
+      required: [code, message, traceId]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        traceId: { type: string }
+      additionalProperties: false
+
+    HealthResponse:
+      type: object
+      required: [status, service]
+      properties:
+        status: { type: string, const: ok }
+        service: { type: string, examples: [careerlens-analyzer] }
+      additionalProperties: false
+
+    Source:
+      type: string
+      description: "`pdf` 或 `text` —— 由 `file` 是否存在决定"
+      enum: [pdf, text]
+
+    # ------------------------------------------------------------------ 请求
+    AnalyzeRequest:
+      type: object
+      description: |
+        同步分析入参。`jobId` / `jdText` / `jobCandidates` 均由 **Java 装配后下发**，
+        Python 自己不去取任何岗位数据。
+      required: [resumeText]
+      properties:
+        resumeText: { type: string, minLength: 1, maxLength: 20000 }
+        jobId:
+          type: ['string', 'null']
+          description: "目标岗位（用于精确 `match`）。必须在 `jobCandidates` 中能找到；缺省且无 `jdText` 时 `match = null`"
+        jdText:
+          type: ['string', 'null']
+          maxLength: 8000
+          description: |
+            **目标 JD 原文**，由 Java 提供（选岗位时取自库，自定义 JD 时来自前端）。
+            用途：生成 `match.matched[].jdEvidence` 与 offset。**不是**岗位数据的入口。
+        jobCandidates:
+          type: array
+          description: |
+            推荐候选集 = **全部 active 岗位**（5–8 个）+ 各自 `requirements`。
+            Java 全量下发，Python 全量线性扫描 —— 不做召回裁剪（part2 spec §2.6）。
+          items: { $ref: '#/components/schemas/JobCandidate' }
+        traceId: { type: ['string', 'null'] }
+
+    AnalyzeStreamRequest:
+      type: object
+      description: |
+        `multipart/form-data` 入参。`file` 与 `resumeText` 至少一个（Java 已保证）。
+      properties:
+        file:
+          type: string
+          format: binary
+          description: "单个 PDF。≤10 页；损坏 / 加密 / 无文本层 → SSE `error`。**不落盘**"
+        resumeText: { type: string, minLength: 1, maxLength: 20000 }
+        jobId: { type: ['string', 'null'], description: "目标岗位；可缺省" }
+        jdText: { type: ['string', 'null'], maxLength: 8000, description: "目标 JD 原文；可缺省" }
+        jobCandidates:
+          type: string
+          description: |
+            **JSON 字符串**（不是文件部分）—— 内容为 `JobCandidate[]` 的 JSON 序列化。
+            与 plan §8 的 curl 验证命令一致：`-F 'jobCandidates=[{...}]'`。
+        traceId: { type: ['string', 'null'] }
+
+    Requirement:
+      type: object
+      description: 岗位技能要求（离线已归一化落库，D3）。字段名与 plan §3 逐字一致
+      required: [skill, importance]
+      properties:
+        skill: { type: string, description: "**标准名**（canonical），如 `C++` 而非 `C/C++`" }
+        importance: { $ref: '#/components/schemas/Importance' }
+        evidence: { type: ['string', 'null'], description: "JD 原文依据（逐字复制）" }
+        jdOffset: { type: ['integer', 'null'] }
+        skillRaw: { type: ['string', 'null'], description: "JD 里的原文写法（展示用）" }
+      additionalProperties: false
+
+    JobCandidate:
+      type: object
+      description: |
+        候选岗位。**不含 `jdText`** —— 目标 JD 原文走顶层 `jdText` 字段
+        （见 `bff-java.yaml` 的 `x-contract-refinement` R2）。
+      required: [jobId, title, requirements]
+      properties:
+        jobId: { type: string, examples: [job-java-01] }
+        title: { type: string }
+        company: { type: ['string', 'null'] }
+        level: { type: ['string', 'null'] }
+        category: { type: ['string', 'null'], description: "分类 code；仅作元数据回填，**不参与打分**" }
+        requirements: { type: array, items: { $ref: '#/components/schemas/Requirement' } }
+      additionalProperties: false
+
+    # ------------------------------------------------------------------ 响应（part2 §2.3 五块）
+    NormalizedSkill:
+      type: object
+      required: [raw, canonical]
+      properties:
+        raw: { type: string }
+        canonical: { type: string }
+        category: { type: ['string', 'null'] }
+      additionalProperties: false
+
+    ResumeSections:
+      type: object
+      required: [education, experience, projects, skills]
+      properties:
+        education: { type: array, items: { type: string } }
+        experience: { type: array, items: { type: string } }
+        projects: { type: array, items: { type: string } }
+        skills: { type: array, items: { type: string } }
+      additionalProperties: false
+
+    ResumeView:
+      type: object
+      required: [sections, skills]
+      properties:
+        sections: { $ref: '#/components/schemas/ResumeSections' }
+        skills: { type: array, items: { $ref: '#/components/schemas/NormalizedSkill' } }
+      additionalProperties: false
+
+    IssueType:
+      type: string
+      description: 与 part1 §2.4 **一致**（冻结枚举，不许改名）
+      enum: [NO_QUANTIFY, NO_STAR, SKILL_STUFFING, TIMELINE_GAP, MISSING_CONTACT]
+
+    Severity:
+      type: string
+      enum: [high, medium, low]
+
+    Importance:
+      type: string
+      enum: [required, preferred]
+
+    Issue:
+      type: object
+      description: LLM 的**唯一运行期职责**（Prompt-2）。规则兜底见 `service/rules.py`
+      required: [type, severity, evidence, suggestion]
+      properties:
+        type: { $ref: '#/components/schemas/IssueType' }
+        severity: { $ref: '#/components/schemas/Severity' }
+        evidence: { type: string, description: "简历原文片段，逐字复制" }
+        suggestion: { type: string, description: "一句「怎么改」，≤20 字" }
+      additionalProperties: false
+
+    MatchedItem:
+      type: object
+      required: [skill, importance, weight, jdEvidence, resumeEvidence]
+      properties:
+        skill: { type: string }
+        importance: { $ref: '#/components/schemas/Importance' }
+        weight: { type: number, description: "required=1.0 / preferred=0.5" }
+        jdEvidence: { type: string }
+        resumeEvidence: { type: string }
+        jdOffset: { type: ['integer', 'null'] }
+        resumeOffset: { type: ['integer', 'null'] }
+      additionalProperties: false
+
+    MissingItem:
+      type: object
+      required: [skill, importance, suggestion]
+      properties:
+        skill: { type: string }
+        importance: { $ref: '#/components/schemas/Importance' }
+        suggestion: { type: string }
+      additionalProperties: false
+
+    MatchResult:
+      type: object
+      description: "`matched ∩ missing = ∅` 且并集 = 该岗位技能全集（AC7 / AC17）"
+      required: [score, matched, missing]
+      properties:
+        score: { type: integer, minimum: 0, maximum: 100 }
+        matched: { type: array, items: { $ref: '#/components/schemas/MatchedItem' } }
+        missing: { type: array, items: { $ref: '#/components/schemas/MissingItem' } }
+      additionalProperties: false
+
+    RecommendationMatchedItem:
+      type: object
+      description: "命中**摘要**（不含双向证据，完整证据在 `match` 块）"
+      required: [skill, importance]
+      properties:
+        skill: { type: string }
+        importance: { $ref: '#/components/schemas/Importance' }
+      additionalProperties: false
+
+    RecommendationMissingItem:
+      type: object
+      required: [skill, importance, suggestion]
+      properties:
+        skill: { type: string }
+        importance: { $ref: '#/components/schemas/Importance' }
+        suggestion: { type: string }
+      additionalProperties: false
+
+    Recommendation:
+      type: object
+      description: |
+        一条推荐。`reason` 由**规则模板**生成（M3.4），**不调 LLM**。
+        排序：`score` 降序，同分按 `jobId` 字典序升序（保证确定性，AC16）。
+      required: [jobId, title, company, level, score, matched, missing, reason]
+      properties:
+        jobId: { type: string }
+        title: { type: string }
+        company: { type: ['string', 'null'] }
+        level: { type: ['string', 'null'] }
+        score: { type: integer, minimum: 0, maximum: 100 }
+        matched: { type: array, items: { $ref: '#/components/schemas/RecommendationMatchedItem' } }
+        missing: { type: array, items: { $ref: '#/components/schemas/RecommendationMissingItem' } }
+        reason: { type: string, examples: ["命中 5/7 项要求，缺口为 Redis、Docker"] }
+      additionalProperties: false
+
+    AnalysisMeta:
+      type: object
+      required: [traceId, llmUsed, degraded, elapsedMs, source, truncated, recommendationCount]
+      properties:
+        traceId: { type: string }
+        llmUsed: { type: boolean }
+        degraded: { type: boolean, description: "LLM 降级（ADR-004）。存储降级不看这里" }
+        elapsedMs: { type: integer }
+        source: { $ref: '#/components/schemas/Source' }
+        truncated: { type: boolean, description: "PDF 文本 >20000 字符被截断（ADR-109），同时 `stage:cleaned.detail.truncated = true`" }
+        recommendationCount: { type: integer, description: "= min(3, 候选总数)" }
+      additionalProperties: false
+
+    AnalysisResult:
+      type: object
+      description: part2 spec §2.3（五块）。同步与流式共用同一形状
+      required: [resume, issues, match, recommendations, meta]
+      properties:
+        resume: { $ref: '#/components/schemas/ResumeView' }
+        issues: { type: array, items: { $ref: '#/components/schemas/Issue' } }
+        match:
+          description: "可空：`jobId` 与 `jdText` 都缺省时为 `null`"
+          oneOf:
+            - $ref: '#/components/schemas/MatchResult'
+            - type: 'null'
+        recommendations: { type: array, items: { $ref: '#/components/schemas/Recommendation' } }
+        meta: { $ref: '#/components/schemas/AnalysisMeta' }
+      additionalProperties: false
+
+    # ------------------------------------------------------------------ SSE
+    SseStream:
+      type: string
+      description: "SSE 文本流；消费方按 `\\n\\n` 分帧 + 行缓冲解析（plan §10 风险 3）"
+      x-framing: "event: <type>\\ndata: <单行 JSON>\\n\\n"
+
+    SseStageName:
+      type: string
+      description: 阶段枚举（part2 spec §2.4 **冻结，按序**）
+      enum: [accepted, parsed, cleaned, normalized, matched, recommended, llm]
+
+    SseStageStatus:
+      type: string
+      description: "`fail` **不终止流**"
+      enum: [start, ok, fail]
+
+    SseMetaEvent:
+      type: object
+      description: "建连后**立刻**发出，**必为首个**事件"
+      required: [traceId, source]
+      properties:
+        traceId: { type: string }
+        source: { $ref: '#/components/schemas/Source' }
+      additionalProperties: false
+
+    SseStageEvent:
+      type: object
+      required: [stage, status, elapsedMs, detail]
+      properties:
+        stage: { $ref: '#/components/schemas/SseStageName' }
+        status: { $ref: '#/components/schemas/SseStageStatus' }
+        elapsedMs: { type: integer }
+        detail:
+          type: object
+          description: "按阶段不同：`{bytes, sha256_8}` / `{pageCount}` / `{textLength, truncated}` / `{skillCount}` / `{score}` / `{candidateCount}` / `{llmUsed, degraded}` / 失败时 `{code}`"
+          additionalProperties: true
+      additionalProperties: false
+
+    SseThinkingEvent:
+      type: object
+      description: "LLM 增量文本，0..n 次。`data` 为**单行 JSON**，与心跳注释行不同"
+      required: [delta]
+      properties:
+        delta: { type: string }
+      additionalProperties: false
+
+    SseErrorEvent:
+      type: object
+      description: |
+        致命阶段失败，终止序列（与 `result` 互斥，`error` 后**仍发** `done`）。
+        本跳可能产生的 code：
+        `PDF_PARSE_FAILED` / `PDF_ENCRYPTED` / `PDF_NO_TEXT_LAYER` / `PDF_TOO_MANY_PAGES`（均 422 语义）。
+      required: [code, message, traceId]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        traceId: { type: string }
+      additionalProperties: false
+
+    SseDoneEvent:
+      type: object
+      description: "流正常结束，**必为最后一个**事件（`finally` 里保证发出）"
+      required: [elapsedMs]
+      properties:
+        elapsedMs: { type: integer }
+      additionalProperties: false
+
+# ============================================================================================
+# 对 plan §3 的细化 —— 需评审确认（施工单要求：走偏必须对照 spec/plan 并显式标注）
+# ============================================================================================
+x-contract-refinement:
+  - id: R1
+    topic: "「不含 jdText」与「下发目标 JD 原文」的关系"
+    plan-says: |
+      plan §3 抬头写 `bff-python.yaml: + POST /internal/analyze/stream（含 jobCandidates，**不含 jdText**）`；
+      但同一节的注紧接着写「若前端传了 jobId（要精确 match），Java 额外把该岗位 `jdText` 放进
+      `jobCandidates[0].jdText`，供生成双向证据」—— **两句话自相矛盾**。
+    spec-says: |
+      part2 spec §2.2（`jdText` 与 `jobId` 二选一、且都可缺省）；
+      AC5（每条 matched 的 `jdEvidence` 必须能在 JD 原文中定位）。
+    decision: |
+      本契约按「**岗位数据的 JD 原文不下发，目标 JD 原文下发**」落地：
+      - `jobCandidates[]` **不含** `jdText` —— 岗位集合只给结构化 `requirements`（plan §3 的原意）
+      - 顶层 `jdText` = **目标**岗位的 JD 原文（AC5 的双向证据需要它；plan §3 的注要求它）
+      - 顶层 `jdText` **不是**岗位数据入口：Python 仍无法自取任何岗位，`jobCandidates` 只能由 Java 装配
+    reason: "AC5 要求双向原文证据，没有目标 JD 原文就生成不了 `jdEvidence`；而 plan 的两句话必须选一句"
+    cost: "顶层多一个字段（part1 就有，属纯增量）；与 plan §3 抬头的字面表述不一致，已标注"
+  - id: R2
+    topic: "`jobCandidates[]` 形状的两处新增字段"
+    plan-says: "plan §3 示例为 `{ jobId, title, company, level, requirements:[{skill, importance, evidence, jdOffset}] }`"
+    spec-says: "part2 spec §2.9（`job_category` 树形字典表，D1）；plan §4.3（`job_requirement.skill_raw`）"
+    decision: "新增两个**可选**字段：候选级 `category`（分类 code）、requirement 级 `skillRaw`（JD 原文写法）"
+    reason: |
+      - `category`：plan §4.1 说分类「给 Python 做方向匹配」，且 AC22 要求分类可查询 —— 不下发则前端/算法都拿不到；
+        明确标注**不参与打分**，避免被误用成第二套权重
+      - `skillRaw`：plan §4.3 的 `job_requirement.skill_raw`（展示用原文写法），如 `C/C++` vs 标准名 `C++`
+    cost: "两个可选字段；下游不读也不影响（Python 只用 `skill` + `importance` 算分）"
+
+# ============================================================================================
+# 已知缺口（诚实登记，写进 DELIVERY.md）
+# ============================================================================================
+x-known-gaps:
+  - id: G1
+    topic: "自定义 JD 的 requirements 需运行期抽取"
+    detail: |
+      ADR-105 决定「岗位技能要求离线抽一次 + 人工校验 + 落库」，因此 `jobCandidates` 里的
+      `requirements` 都是**预置岗位**的。前端直接粘贴自定义 JD（`jdText` 有、`jobId` 无）时，
+      库里没有对应 requirements，Python 必须在**运行期**从 `jdText` 抽取（沿用 part1 T5 的能力）。
+    impact: "该路径不可复现程度更高（受 LLM 抽取影响），且比预置岗位慢"
+    mitigation: "契约层已用 `jobId` / `jdText` 三态表显式写明行为；写进 DELIVERY.md 取舍说明"
+  - id: G2
+    topic: "PDF 排版（双栏 / 表格）解析顺序可能乱"
+    detail: "pypdf 纯文本抽取不还原复杂版式；`cleaner` 做阅读顺序自检但只 WARN，不阻断"
+    impact: "部分真实简历的 `sections` 切块质量下降"
+    mitigation: "ADR-103 回退：换 pdfplumber，**只改 `pdf_parser.py` 一个文件**；明确不做 OCR"
+  - id: G3
+    topic: "两个入口的超长行为不一致"
+    detail: "PDF 入口 >20000 字符 → **截断 + `meta.truncated=true`**（ADR-109）；纯文本入口 → **400 `RESUME_TOO_LONG`**"
+    impact: "同一份超长内容，走文件能出结果、走粘贴会被拒"
+    mitigation: "有意为之（传了文件因太长被拒体验差）；写进 DELIVERY.md"

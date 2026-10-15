@@ -1,20 +1,73 @@
+spring:
+  application:
+    name: job-service
+
+  # ------------------------------------------------------------------
+  # part2 M5：岗位领域数据（spec.md §2.9 的 6 张表，本期只读 4 张）
+  # ------------------------------------------------------------------
+  # 存储两档（详见 README「存储两档」与 DELIVERY.md 的取舍说明）：
+  #
+  #   ① jdbc:h2:mem:...   **默认**。内嵌 H2，零外部依赖，仓库克隆下来即可运行
+  #                       （最高原则：任何时刻仓库都可运行）。
+  #   ② jdbc:mysql://...  生产主路径。用 JOB_DB_URL 覆盖。
+  #
+  # 两档共用同一份 db/h2/schema.sql 或 db/mysql/schema.sql + db/seed.sql，
+  # 所以**换存储不换数据、不换分数** —— AC23 的「停 MySQL 推荐仍正常」
+  # 与「停 MySQL 前后分数一致」因此天然成立。
+  datasource:
+    url: ${JOB_DB_URL:jdbc:h2:mem:careerlens;MODE=MySQL;DATABASE_TO_LOWER=TRUE}
+    driver-class-name: ${JOB_DB_DRIVER:org.h2.Driver}
+    username: ${JOB_DB_USER:sa}
+    password: ${JOB_DB_PASSWORD:}
+
+  jpa:
+    hibernate:
+      # validate 而不是 update/create：表结构由 db/{mysql,h2}/schema.sql 定义并版本化，
+      # 让 Hibernate 改表等于「数据库结构的变更不走 review」—— 那正是 D1/D2/D3
+      # 想避免的。启动时校验不过就直接失败，比悄悄改表好。
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        # 只打 ERROR：JPA 的 SQL 日志在排障时才开（logging.level.org.hibernate.SQL=DEBUG）
+        jdbc:
+          lob:
+            non_contextual_creation: true
+
+  sql:
+    init:
+      # always：每次启动都跑 schema + seed。schema 全是 CREATE TABLE IF NOT EXISTS，
+      # seed 全是幂等语句（ON DUPLICATE KEY UPDATE / 缺则插），所以重复启动安全（AC23）。
+      mode: always
+      schema-locations: classpath:db/${JOB_DB_DIALECT:h2}/schema.sql
+      data-locations: classpath:db/seed.sql
+      # 第一条 SQL 失败就停：seed 是「全部成功或全部不生效」的原子单元，
+      # 半套种子比没有种子更危险（推荐结果缺几个岗位，没人知道为什么）。
+      continue-on-error: false
+      separator: ";"
+      encoding: UTF-8
+
 server:
   port: ${JOB_SERVICE_PORT:8080}
   shutdown: graceful
 
-spring:
-  application:
-    name: job-service
+  # 流式转发的异步超时（tasks.md M5.6 的 SseEmitter timeout=130_000 等价物）。
+  # 必须大于 Java→Python 的 110s（plan §6.1 超时矩阵：外层 > 内层）。
+  tomcat:
+    connection-timeout: 30s
+
+spring.mvc.async.request-timeout: ${STREAM_TIMEOUT_MS:130000}
 
 careerlens:
   version: 0.1.0
   analyzer:
     # 链路位置：job-service → analyzer
     base-url: ${ANALYZER_URL:http://localhost:8000}
-    # 超时矩阵见 plan.md §6.1
-    timeout-ms: ${ANALYZER_TIMEOUT_MS:45000}
+    # 超时矩阵见 plan.md §6.1。整条流的预算，必须大于 SSE 心跳间隔（15s）的数倍。
+    timeout-ms: ${ANALYZER_TIMEOUT_MS:110000}
 
 logging:
   level:
     root: ${LOG_LEVEL:INFO}
     com.careerlens: ${LOG_LEVEL:INFO}
+    # 排障时才打开：org.hibernate.SQL: DEBUG

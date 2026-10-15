@@ -1,0 +1,22 @@
+{
+  "code": "job-frontend-01",
+  "title": "前端开发工程师（Vue 方向）",
+  "company": "某 SaaS 服务商",
+  "level": "社招",
+  "category": "tech-frontend",
+  "tags": ["组件库", "数据可视化", "B 端"],
+  "jdRaw": "岗位职责：\n1、负责公司 B 端产品的前端开发与体验优化；\n2、参与组件库建设与前端工程化改造；\n3、与后端协作完成接口联调与数据可视化。\n\n任职要求：\n1、本科及以上学历，2 年以上前端开发经验；\n2、精通HTML、CSS、JavaScript，熟悉ES6+语法；\n3、熟练使用Vue，理解响应式原理与组件化开发；\n4、熟悉TypeScript，具备良好的类型设计习惯；\n5、熟悉Vite构建工具与前端工程化流程；\n6、熟悉ECharts，能独立完成数据可视化需求；\n7、熟悉Git协作流程。\n\n加分项：\n1、熟悉Element Plus组件库者优先；\n2、了解Sass等 CSS 预处理语言者优先；\n3、有React项目经验者优先。",
+  "requirements": [
+    { "skill": "HTML", "importance": "required", "evidence": "精通HTML、CSS、JavaScript" },
+    { "skill": "CSS", "importance": "required", "evidence": "精通HTML、CSS、JavaScript" },
+    { "skill": "JavaScript", "importance": "required", "evidence": "精通HTML、CSS、JavaScript" },
+    { "skill": "Vue", "importance": "required", "evidence": "熟练使用Vue，理解响应式原理与组件化开发" },
+    { "skill": "TypeScript", "importance": "required", "evidence": "熟悉TypeScript，具备良好的类型设计习惯" },
+    { "skill": "Vite", "importance": "required", "evidence": "熟悉Vite构建工具与前端工程化流程" },
+    { "skill": "ECharts", "importance": "required", "evidence": "熟悉ECharts，能独立完成数据可视化需求" },
+    { "skill": "Git", "importance": "required", "evidence": "熟悉Git协作流程" },
+    { "skill": "Element Plus", "importance": "preferred", "evidence": "熟悉Element Plus组件库者优先" },
+    { "skill": "Sass", "importance": "preferred", "evidence": "了解Sass等 CSS 预处理语言者优先" },
+    { "skill": "React", "importance": "preferred", "evidence": "有React项目经验者优先" }
+  ]
+}

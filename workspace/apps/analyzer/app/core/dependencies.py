@@ -11,7 +11,9 @@ Java 的构造器注入）。这样做的好处：
 
 from functools import lru_cache
 
+from app.llm.client import LlmClient, create_llm_client
 from app.service.analysis_service import AnalysisService, create_analysis_service
+from app.service.normalizer import SkillDictionary, get_dictionary as _load_dictionary
 
 
 @lru_cache
@@ -23,3 +25,25 @@ def get_analysis_service() -> AnalysisService:
     `app.dependency_overrides`。
     """
     return create_analysis_service()
+
+
+@lru_cache
+def get_dictionary() -> SkillDictionary:
+    """技能词典单例。
+
+    与 `get_analysis_service` 分开而不是塞进它里面：词典同时被**同步**分析
+    和**流式**分析两条链路使用，而 `create_analysis_service()` 目前不接收依赖。
+    真到需要注入的那天，改这一个函数即可。
+    """
+    return _load_dictionary()
+
+
+@lru_cache
+def get_llm_client() -> LlmClient:
+    """LLM 客户端单例。
+
+    内部持有一个可复用的 `httpx.AsyncClient` 会更省，但那会让「客户端生命周期」
+    和「FastAPI 应用生命周期」纠缠在一起。当前每次流式请求自建自销，
+    代价是一次 TCP 握手 —— 对一个 3h 项目来说，可预测比省一次握手重要。
+    """
+    return create_llm_client()

@@ -1,8 +1,10 @@
 import Router from '@koa/router';
 
 import { API_PREFIX } from '../config/constants';
+import type { AnalysisController } from '../controller/analysis.controller';
 import type { HealthController } from '../controller/health.controller';
 import type { JobController } from '../controller/job.controller';
+import { uploadGuard } from '../middleware/upload.middleware';
 
 /**
  * 路由接线层：**只做「路径 → controller 方法」的映射**。
@@ -14,15 +16,21 @@ import type { JobController } from '../controller/job.controller';
  *
  * 想找「某个 URL 由谁处理」→ 读这一个文件即可（溯源入口）。
  */
-export function createApiRouter(deps: { health: HealthController; job: JobController }): Router {
+export function createApiRouter(deps: {
+  health: HealthController;
+  job: JobController;
+  analysis: AnalysisController;
+}): Router {
   const router = new Router();
 
   router.get('/healthz', deps.health.health);
   router.get(`${API_PREFIX}/ping`, deps.job.ping);
 
-  // T3 起追加：
-  //   router.get(`${API_PREFIX}/jobs`, deps.job.list);
-  //   router.post(`${API_PREFIX}/analysis`, validateBody(analyzeRequestSchema), deps.analysis.analyze);
+  // part2 M6：`POST /api/analysis/stream`
+  // `uploadGuard` 是**唯一**文件校验点（大小 / MIME / magic number）。
+  // 挂在路由上而不是写进 controller —— 「请求进来先过校验」在路由表里可见，
+  // 也保证 controller 拿到的 `ctx.state.upload` 一定是校验过的。
+  router.post(`${API_PREFIX}/analysis/stream`, uploadGuard, deps.analysis.stream);
 
   return router;
 }

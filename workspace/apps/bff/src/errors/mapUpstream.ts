@@ -21,6 +21,17 @@ export function mapUpstreamError(error: unknown): AppError {
   }
 
   if (error instanceof UpstreamStatusError) {
+    // ---- part2 M6.5：Java 413 / 415 **原样透传** ------------------------
+    // 这两个是「建流前能判定的」错误，Java 已经判过了。若在这里改写成
+    // SERVICE_UNAVAILABLE 或 ANALYSIS_FAILED，前端就失去「提示用户换个文件」的机会 ——
+    // 而那正是 413/415 存在的意义。所以 status 与 code 都照搬。
+    if (error.service === 'job-service' && error.status === 413) {
+      return AppError.fileTooLarge();
+    }
+    if (error.service === 'job-service' && error.status === 415) {
+      return AppError.unsupportedFileType();
+    }
+
     // Java 404 → JOB_NOT_FOUND；analyzer 4xx → ANALYSIS_FAILED；其余（含双方 5xx）→ 503
     if (error.service === 'job-service' && error.status === 404) {
       return AppError.jobNotFound('(unknown)');

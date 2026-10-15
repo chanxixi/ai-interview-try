@@ -35,7 +35,14 @@ def test_analyze_returns_ok_with_frozen_top_level_keys(client: TestClient) -> No
     )
 
     assert resp.status_code == 200
-    assert set(resp.json().keys()) == {"resume", "issues", "match", "meta"}
+    # part2 spec §2.3：五块（part1 四块 + recommendations）
+    assert set(resp.json().keys()) == {
+        "resume",
+        "issues",
+        "match",
+        "recommendations",
+        "meta",
+    }
 
 
 def test_analyze_uses_body_trace_id_over_contextvar(client: TestClient) -> None:

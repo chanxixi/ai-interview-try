@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api.v1 import health, internal
+from app.api.v1 import health, internal, stream
 from app.core.config import settings
 from app.core.exception_handlers import register_exception_handlers
 from app.core.logging import setup_logging
@@ -45,3 +45,6 @@ app.add_middleware(TraceIdMiddleware)
 
 app.include_router(health.router)
 app.include_router(internal.router, prefix="/internal")
+# part2 流式入口（spec §2.2）。同样挂 `/internal` 前缀 —— 它是 Java→Python 的内部接口，
+# 与同步版 `/internal/analyze` 并列，而不是另起一个对外路径。
+app.include_router(stream.router, prefix="/internal")

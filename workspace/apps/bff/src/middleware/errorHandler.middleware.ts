@@ -3,6 +3,7 @@ import type { Context, Next } from 'koa';
 import { TRACE_ID_HEADER } from '../config/constants';
 import { AppError } from '../errors/appError';
 import { mapUpstreamError } from '../errors/mapUpstream';
+import { mapMulterError } from './upload.middleware';
 import { logger } from '../util/logger';
 import { toErrorResponse } from '../util/response';
 
@@ -21,7 +22,12 @@ export async function errorHandlerMiddleware(ctx: Context, next: Next): Promise<
   try {
     await next();
   } catch (error) {
-    const appError = error instanceof AppError ? error : mapUpstreamError(error);
+    // 翻译顺序是有讲究的：
+    //   ① 已经是 AppError（业务层明确判定的）→ 原样用
+    //   ② multer 的错误（超大文件 / 解析失败）→ 契约里的 413 / 400（M6.1）
+    //   ③ 其余（下游故障 / 未预期异常）→ mapUpstreamError 兜底
+    const appError =
+      error instanceof AppError ? error : (mapMulterError(error) ?? mapUpstreamError(error));
     // traceId 中间件若自身失败，ctx.state.traceId 可能尚未写入 —— 兜底生成，保证响应体可对齐
     const traceId = ctx.state.traceId ?? ctx.get(TRACE_ID_HEADER);
 

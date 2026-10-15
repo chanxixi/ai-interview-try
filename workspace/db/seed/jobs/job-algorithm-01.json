@@ -1,0 +1,21 @@
+{
+  "code": "job-algorithm-01",
+  "title": "算法工程师（推荐 / 大模型方向）",
+  "company": "某短视频公司",
+  "level": "校招",
+  "category": "tech-algorithm",
+  "tags": ["推荐系统", "大模型", "校招"],
+  "jdRaw": "岗位职责：\n1、负责推荐与搜索场景的召回、排序算法设计与迭代；\n2、参与大模型应用落地，包括 RAG 检索增强与效果评估；\n3、与工程团队协作完成算法服务的上线与监控。\n\n任职要求：\n1、硕士及以上学历，计算机、数学或相关专业；\n2、精通Python，熟悉常用数据结构与算法；\n3、熟悉PyTorch，具备深度学习模型训练与调优经验；\n4、熟悉RAG检索增强生成的技术链路，了解向量检索与重排；\n5、熟悉LLM大模型应用开发，掌握 Prompt Engineering 与提示词设计方法；\n6、熟悉Linux开发环境与Shell脚本。\n\n加分项：\n1、熟悉LangChain等大模型应用框架者优先；\n2、有TensorFlow使用经验者优先；\n3、有Kafka等流式数据处理经验者优先。",
+  "requirements": [
+    { "skill": "Python", "importance": "required", "evidence": "精通Python，熟悉常用数据结构与算法" },
+    { "skill": "PyTorch", "importance": "required", "evidence": "熟悉PyTorch，具备深度学习模型训练与调优经验" },
+    { "skill": "RAG", "importance": "required", "evidence": "熟悉RAG检索增强生成的技术链路" },
+    { "skill": "LLM", "importance": "required", "evidence": "熟悉LLM大模型应用开发" },
+    { "skill": "Prompt Engineering", "importance": "required", "evidence": "掌握 Prompt Engineering 与提示词设计方法" },
+    { "skill": "Linux", "importance": "required", "evidence": "熟悉Linux开发环境与Shell脚本" },
+    { "skill": "Shell", "importance": "required", "evidence": "熟悉Linux开发环境与Shell脚本" },
+    { "skill": "LangChain", "importance": "preferred", "evidence": "熟悉LangChain等大模型应用框架者优先" },
+    { "skill": "TensorFlow", "importance": "preferred", "evidence": "有TensorFlow使用经验者优先" },
+    { "skill": "Kafka", "importance": "preferred", "evidence": "有Kafka等流式数据处理经验者优先" }
+  ]
+}

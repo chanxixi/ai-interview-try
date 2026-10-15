@@ -100,13 +100,91 @@ exception / config / web 是横切，可被任意层引用，自身不依赖业�
 
 ## 本地运行
 
-```bash
-# 依赖 analyzer 在 8000（探针会下探它；不在也能跑，只是 downstream 显示 down）
-mvn spring-boot:run
-# → http://localhost:8080
+### 前置：JDK 17 + Maven 已在 PATH 里（2026-10-14 配置）
 
-# 显式指定端口（本机沙箱可能注入 SERVER__PORT，会被 Spring 宽松绑定吃掉）
-mvn spring-boot:run -Dspring-boot.run.arguments=--server.port=8080
+本机 `mvn` / `java` 原本**不在 PATH**（工具链是隔离安装的便携版），直接跑 `mvn spring-boot:run` 会报
+`无法将"mvn"项识别为 cmdlet、函数、脚本文件或可运行程序的名称`。已写入**用户级**环境变量：
+
+| 变量 | 值 |
+|---|---|
+| `JAVA_HOME` | `C:\Users\Administrator\.workbuddy\binaries\tools\jdk\jdk-17.0.2` |
+| `Path` 追加 | `...\jdk-17.0.2\bin`、`...\maven\apache-maven-3.9.9\bin` |
+
+**Maven 镜像**：`~/.m2/settings.xml` 已写入阿里云公共仓库镜像（2026-10-14 补）。
+此前该文件不存在，`mvn` 会直连 `repo.maven.apache.org`，国内经常卡住后报
+`Could not transfer artifact ... Connection timed out`。撤销：删掉该文件即恢复直连。
+
+> **改完必须重开终端**（环境变量对已运行的终端无效）。撤销：系统属性 → 环境变量 → 删掉这两条。
+> 工具链不进仓库；`scripts/start-all.sh` 仍保留「PATH 里找不到 java 就回退到便携版」的逻辑。
+
+### 三条命令
+
+```powershell
+cd E:\代码\ai求职平台全栈笔试题\workspace\apps\job-service
+
+mvn spring-boot:run              # ① 开发调试：前台 + 实时日志
+```
+
+| 想做什么 | 命令 | 耗时 |
+|---|---|---|
+| **开发调试**（前台，实时日志，改完重起） | `mvn spring-boot:run` | 约 1–3 秒启动 |
+| **跑产物**（最接近生产，需先打包） | `mvn -q clean package -DskipTests` 然后 `java -jar target/job-service-0.1.0.jar` | 打包 20–40 秒 / 启动约 2 秒 |
+| **只跑测试** | `mvn test` | 约 15–30 秒 |
+
+**端口不用手写** —— `application.yml` 里是 `${JOB_SERVICE_PORT:8080}`，默认就是 8080。
+
+### ⚠️ `SERVER__PORT=0` 只在 AI 助手沙箱里存在，不是你的环境
+
+`SERVER__PORT=0` / `SERVER__HOST=127.0.0.1` 是 **AI 助手执行命令时注入的进程级环境变量**。
+已核对注册表 `HKCU:\Environment` —— **你的终端里没有 `SERVER*`**。
+
+Spring Boot 的宽松绑定会把 `SERVER__PORT` 映射成 `server.port=0`，让服务跑到**随机端口**上
+（表现为「进程活着但 8080 不通」）。这是**助手侧执行**才需要防的坑，所以：
+
+- **你自己在终端跑** → 不用加任何参数；
+- **助手/脚本代跑** → 显式加 `--server.port=8080 --server.address=127.0.0.1`（`start-all.sh` 已这么做）。
+
+> Git Bash 里用 Maven 插件传参要加引号：`"-Dspring-boot.run.arguments=--server.port=8080 --server.address=127.0.0.1"`，
+> 值含空格，不加引号会被拆成两个参数。PowerShell 里则不需要传参。
+
+### 依赖关系
+
+analyzer（`:8000`）不在也能启动 —— `/internal/ping` 会容错返回 `downstream.status = "down"`，**不报错**。
+想看完整两跳，先起 analyzer：`cd ../analyzer && .venv/Scripts/python.exe -m uvicorn app.main:app --reload --port 8000`。
+
+### 改完代码怎么生效
+
+**Java 没有热重载**（`pom.xml` 里没有 `spring-boot-devtools`）：改完 `.java` 要 Ctrl+C 重起；
+`java -jar` 那条还得先重新打包。想自动重启就加 devtools —— 代价是多一个依赖，
+且 devtools 会引入独立的 restart classloader，排查类加载问题时反而是干扰。
+
+### 坑：旧进程会锁住 jar / 占住 8080
+
+**最常见的一种**：上一次的服务没停干净，再跑 `mvn spring-boot:run` 直接启动失败：
+
+```
+Web server failed to start. Port 8080 was already in use.
+```
+
+注意它是**启动失败**、不是编译失败 —— 日志里 `Tomcat initialized with port 8080` 之后才报错，
+容易误判成代码问题。先按下面两条确认端口，再重试。
+
+停服务再打包，否则 `mvn clean` 报 `Failed to delete ...jar`、`repackage` 报 `Unable to rename ... .jar.original`。
+而且旧进程可能因端口被顶掉而**不监听你以为的端口**，所以不容易发现：
+
+```bash
+bash ../../scripts/stop-all.sh job-service          # 按端口找 PID 结束
+netstat -ano | grep LISTENING | grep ":8080[[:space:]]"   # 应无输出
+```
+
+### 验证
+
+```bash
+curl -s http://127.0.0.1:8080/healthz
+# {"service":"job-service","status":"ok"}
+
+curl -s -H 'X-Trace-Id: demo-001' http://127.0.0.1:8080/internal/ping
+# 响应里出现 downstream 且 traceId 与请求头一致 → 真的调到了 analyzer
 ```
 
 ## 测试

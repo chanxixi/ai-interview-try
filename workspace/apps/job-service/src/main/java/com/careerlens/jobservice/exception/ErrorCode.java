@@ -42,6 +42,22 @@ public enum ErrorCode {
     /** 下游调用超时（超时矩阵见 plan.md §6.1）。 */
     UPSTREAM_TIMEOUT(HttpStatus.GATEWAY_TIMEOUT, "下游服务响应超时"),
 
+    /**
+     * 上传文件超过 10 MB（part2 spec.md §2.5）。
+     *
+     * <p>**BFF 是第一道校验**（建流前同步拒绝）；本层是第二道，
+     * 只为「BFF 被绕过 / 被直接调用」时保留明确出口。
+     */
+    FILE_TOO_LARGE(HttpStatus.PAYLOAD_TOO_LARGE, "上传文件超过 10 MB 上限"),
+
+    /**
+     * 文件类型不支持（MIME 非 pdf，或 magic number 不是 {@code %PDF-}）。
+     *
+     * <p>同上：**BFF 是第一道**，本层是兜底。判据是 magic number 而不是扩展名
+     * —— 改名为 {@code .pdf} 的 docx 必须被拦下（AC12）。
+     */
+    UNSUPPORTED_FILE_TYPE(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "不支持的文件类型，仅接受 PDF"),
+
     /** 未预期错误 —— 兜底，不透传原始错误栈（spec.md §3.3）。 */
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "服务内部错误");
 

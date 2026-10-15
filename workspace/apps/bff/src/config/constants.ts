@@ -22,4 +22,14 @@ export const TIMEOUT_MS = {
   jobService: 5_000,
   /** 分析要过 LLM，给足时间；超时后由 analyzer 内部降级（ADR-004） */
   analyzer: 45_000,
+  /**
+   * part2：BFF → Java 的**整条流**预算（120s）。
+   *
+   * 必须大于 Java → Python 的 110s（外层 > 内层，plan.md §6.1）——
+   * 否则 Java 还没放弃、BFF 就先断了，用户看到的是 504 而不是「分析慢」。
+   *
+   * 注意它是**整条流**而不是首字节：LLM 思考阶段可能几十秒不出字符，
+   * 按首字节超时会把正常的慢思考误判成故障。
+   */
+  stream: 120_000,
 } as const;

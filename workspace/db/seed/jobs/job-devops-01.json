@@ -1,0 +1,23 @@
+{
+  "code": "job-devops-01",
+  "title": "DevOps / 运维开发工程师",
+  "company": "某云服务商",
+  "level": "社招",
+  "category": "tech-devops",
+  "tags": ["CI/CD", "容器化", "可观测"],
+  "jdRaw": "岗位职责：\n1、负责公司业务的容器化部署与 CI/CD 流程建设；\n2、负责线上服务的监控、告警与容量规划；\n3、参与故障复盘，推动稳定性改进。\n\n任职要求：\n1、本科及以上学历，计算机相关专业；\n2、熟悉Linux系统管理与性能调优；\n3、熟练使用Docker进行应用打包与部署；\n4、了解Kubernetes编排；\n5、熟悉Jenkins流水线配置；\n6、有GitHub Actions使用经验；\n7、熟悉Nginx反向代理与负载均衡配置；\n8、熟悉Shell脚本与Python自动化脚本开发；\n9、熟悉Prometheus与Grafana监控体系。\n\n加分项：\n1、熟悉Ansible自动化配置管理者优先；\n2、熟悉MySQL主从复制与备份恢复者优先。",
+  "requirements": [
+    { "skill": "Linux", "importance": "required", "evidence": "熟悉Linux系统管理与性能调优" },
+    { "skill": "Docker", "importance": "required", "evidence": "熟练使用Docker进行应用打包与部署" },
+    { "skill": "Kubernetes", "importance": "preferred", "evidence": "了解Kubernetes编排" },
+    { "skill": "Jenkins", "importance": "required", "evidence": "熟悉Jenkins流水线配置" },
+    { "skill": "GitHub Actions", "importance": "required", "evidence": "有GitHub Actions使用经验" },
+    { "skill": "Nginx", "importance": "required", "evidence": "熟悉Nginx反向代理与负载均衡配置" },
+    { "skill": "Shell", "importance": "required", "evidence": "熟悉Shell脚本与Python自动化脚本开发" },
+    { "skill": "Python", "importance": "required", "evidence": "熟悉Shell脚本与Python自动化脚本开发" },
+    { "skill": "Prometheus", "importance": "required", "evidence": "熟悉Prometheus与Grafana监控体系" },
+    { "skill": "Grafana", "importance": "required", "evidence": "熟悉Prometheus与Grafana监控体系" },
+    { "skill": "Ansible", "importance": "preferred", "evidence": "熟悉Ansible自动化配置管理者优先" },
+    { "skill": "MySQL", "importance": "preferred", "evidence": "熟悉MySQL主从复制与备份恢复者优先" }
+  ]
+}
