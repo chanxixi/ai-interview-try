@@ -185,7 +185,9 @@ paths:
 
         ```
         meta → stage(accepted) → stage(parsed) → stage(cleaned) → stage(normalized)
-             → stage(matched) → stage(recommended) → stage(llm) → [thinking × n]
+             → stage(matched) → stage(recommended) → stage(llm)
+             → [stage(reviewed)   ← **仅 deep 模式**；standard 不发]
+             → [thinking × n]     ← **仅文案阶段（Prompt-4）**发
              → result → done
         ```
 
@@ -200,6 +202,7 @@ paths:
         | `matched` | 加权覆盖率打分（**唯一**公式实现） | `service/matcher.py` | `{score}` |
         | `recommended` | 全量候选排序取 Top-3 | `service/recommender.py` | `{candidateCount}` |
         | `llm` | 生成 `issues` + `thinking`（失败即降级） | `llm/client.py` | `{llmUsed, degraded}` |
+        | `reviewed` | 逐条判定 + 六维档（**仅 deep**；失败即降级） | `llm/client.py` + `service/advisor_rules.py` | `{verdictCount, directionCount}` |
 
         ## 硬性规则（part2 spec §2.4）
 
@@ -208,6 +211,7 @@ paths:
         3. `error` 与 `result` **互斥**；`stage.status = fail` **不终止流**（仅致命阶段 `parsed` 失败才发 `error`）
         4. LLM 降级时 `thinking` 可为 0 次，但 `result` 与 `done` 照常
         5. 生成器必须 `try/except/finally` 包裹 —— `finally` 里保证发 `done`，否则连接悬挂（plan §6.3）
+        6. **`thinking` 只在文案阶段（Prompt-4）发**；判定阶段（Prompt-3）输出 JSON，不发 `thinking`（part3 spec §2.4）
 
         ## multipart 字段说明
 
@@ -253,10 +257,11 @@ paths:
                   - "`stage.status = fail` **不终止流**；仅 `parsed` 致命失败才发 `error`"
                   - "LLM 降级时 `thinking` 可为 0 次，但 `result` 与 `done` 照常"
                   - "`result` 恰好一次"
-                stages: [accepted, parsed, cleaned, normalized, matched, recommended, llm]
+                  - "`thinking` **只在文案阶段（Prompt-4）发**；判定阶段（Prompt-3）输出 JSON，不发 thinking（part3 spec §2.4）"
+                stages: [accepted, parsed, cleaned, normalized, matched, recommended, llm, reviewed]
                 events:
                   - { event: meta,     count: "恰好 1 次", schema: '#/components/schemas/SseMetaEvent' }
-                  - { event: stage,    count: "每阶段 start/ok 各 1 次（7 阶段 → 最多 14 次）", schema: '#/components/schemas/SseStageEvent' }
+                  - { event: stage,    count: "每阶段 start/ok 各 1 次（standard 7 阶段 → 最多 14 次；deep 8 阶段 → 最多 16 次）", schema: '#/components/schemas/SseStageEvent' }
                   - { event: thinking, count: "0..n 次（LLM 降级时为 0）", schema: '#/components/schemas/SseThinkingEvent' }
                   - { event: result,   count: "恰好 1 次（与 error 互斥）", schema: '#/components/schemas/AnalysisResult' }
                   - { event: error,    count: "0 或 1 次（与 result 互斥）", schema: '#/components/schemas/SseErrorEvent' }
@@ -418,6 +423,12 @@ components:
             Java 全量下发，Python 全量线性扫描 —— 不做召回裁剪（part2 spec §2.6）。
           items: { $ref: '#/components/schemas/JobCandidate' }
         traceId: { type: ['string', 'null'] }
+        analysisDepth: { $ref: '#/components/schemas/AnalysisDepth' }
+        topN:
+          type: integer
+          minimum: 1
+          maximum: 10
+          description: "推荐条数上限（part3 C7）。**缺省 3** —— 与 part2 一致，AC17 不被破坏"
 
     AnalyzeStreamRequest:
       type: object
@@ -437,6 +448,12 @@ components:
             **JSON 字符串**（不是文件部分）—— 内容为 `JobCandidate[]` 的 JSON 序列化。
             与 plan §8 的 curl 验证命令一致：`-F 'jobCandidates=[{...}]'`。
         traceId: { type: ['string', 'null'] }
+        analysisDepth: { $ref: '#/components/schemas/AnalysisDepth' }
+        topN:
+          type: integer
+          minimum: 1
+          maximum: 10
+          description: "推荐条数上限（part3 C7）。**缺省 3**"
 
     Requirement:
       type: object
@@ -595,6 +612,9 @@ components:
         source: { $ref: '#/components/schemas/Source' }
         truncated: { type: boolean, description: "PDF 文本 >20000 字符被截断（ADR-109），同时 `stage:cleaned.detail.truncated = true`" }
         recommendationCount: { type: integer, description: "= min(3, 候选总数)" }
+        analysisDepth: { $ref: '#/components/schemas/AnalysisDepth', description: "part3：本次实际生效的深度；请求缺省时为 `standard`。**仅 deep 时出现**" }
+        verdictCount: { type: integer, description: "part3：`verdicts` 实际条数。**仅 deep 时出现**" }
+        directionCount: { type: integer, description: "part3：`growthDirections` 实际条数。**仅 deep 时出现**" }
       additionalProperties: false
 
     AnalysisResult:
@@ -610,7 +630,98 @@ components:
             - $ref: '#/components/schemas/MatchResult'
             - type: 'null'
         recommendations: { type: array, items: { $ref: '#/components/schemas/Recommendation' } }
+
+        # ---- part3 增量（LLM 深度匹配分析）。**`standard` 模式下这四个键完全不出现**
+        #      —— 只有「键不存在」，AC25 的「与 part2 逐字节一致」才严格成立。
+        verdicts: { type: array, items: { $ref: '#/components/schemas/Verdict' }, description: "part3：逐条判定。**仅 deep**；降级时为空数组" }
+        improvements: { type: array, items: { $ref: '#/components/schemas/Improvement' }, description: "part3：优化点。**仅 deep**；降级时为空数组" }
+        growthDirections: { type: array, items: { $ref: '#/components/schemas/GrowthDirection' }, description: "part3：提升方向（≤5）。**仅 deep**；降级时为空数组" }
+        abilityProfile:
+          description: "part3：六维画像。**仅 deep**；降级时为 `null`"
+          oneOf:
+            - $ref: '#/components/schemas/AbilityProfile'
+            - type: 'null'
+
         meta: { $ref: '#/components/schemas/AnalysisMeta' }
+      additionalProperties: false
+
+    # ------------------------------------------------------------------ part3 增量（LLM 深度匹配分析）
+    AnalysisDepth:
+      type: string
+      description: |
+        分析深度（part3 spec §2.2）。**缺省 = `standard`**，即 part2 行为一字不变（AC25）。
+        `deep` 额外产出 `verdicts` / `improvements` / `growthDirections` / `abilityProfile` 四块。
+      enum: [standard, deep]
+
+    VerdictKind:
+      type: string
+      description: 逐条判定档位（part3 spec §2.3 **冻结三档**，不许增删）
+      enum: [satisfied, partial, missing]
+
+    Verdict:
+      type: object
+      description: |
+        对**一条岗位要求**的判定（part3 spec §2.3）。与 `match` 的关系：
+        `match` 是**集合级事实**（命中 / 未命中），`verdict` 是在其**骨架之上**的判档与理由 ——
+        LLM **不得新增 / 删除条目**，只能在既有条目上判档（plan §8 风险 1）。
+      required: [skill, importance, verdict, reason]
+      properties:
+        skill: { type: string, description: "标准名（canonical），与 `match` 同源" }
+        importance: { $ref: '#/components/schemas/Importance' }
+        verdict: { $ref: '#/components/schemas/VerdictKind' }
+        reason: { type: string, description: "一句话，必须指向简历里的具体内容；找不到依据就判 `missing`" }
+        jdEvidence: { type: ['string', 'null'], description: "JD 原文片段（逐字复制）" }
+        resumeEvidence: { type: ['string', 'null'], description: "简历原文片段（逐字复制）；无则空串" }
+      additionalProperties: false
+
+    Improvement:
+      type: object
+      description: 优化点 —— **怎么改简历**（part3 spec §2.3）
+      required: [area, action, evidence, targets]
+      properties:
+        area: { type: string, examples: [项目描述] }
+        action: { type: string, description: "一句可执行的改法" }
+        evidence: { type: string, description: "简历原文片段（逐字复制）" }
+        targets: { type: array, items: { type: string }, description: "它服务于哪几条要求（技能标准名）" }
+      additionalProperties: false
+
+    GrowthDirection:
+      type: object
+      description: |
+        提升方向 —— **该补什么能力**（part3 spec §2.3）。
+        顺序由**代码**按 `priority` 升序定，**LLM 不排序**（spec §2.7 禁 LLM 决定排序）。
+      required: [direction, why, firstStep, priority]
+      properties:
+        direction: { type: string, examples: [分布式缓存] }
+        why: { type: string, description: "必须引用具体缺口" }
+        firstStep: { type: string, description: "一个可在一周内启动的动作；只给方向与关键词，**不给课程链接 / 机构名**" }
+        priority: { type: integer, minimum: 1, description: "1 为最高；代码按它升序" }
+      additionalProperties: false
+
+    AbilityDimension:
+      type: object
+      description: |
+        一个能力维度的分数。**分数由代码算**（档位 → 分数），LLM 只给档位与证据（part3 spec §2.5②）。
+        `score = null` 表示**该维算不出** —— 前端必须显示「无依据」，**不得画成 0 分**（§2.5.2 ①）。
+      required: [name, score, rubricRef, evidence]
+      properties:
+        name: { type: string, description: "六维之一（冻结集合，见 `AbilityProfile`）" }
+        score: { type: ['integer', 'null'], minimum: 0, maximum: 100, description: "`null` = 算不出，**不是 0 分**" }
+        rubricRef: { type: string, description: "rubric 出处，如 `tech.depth.L3`" }
+        evidence: { type: string, description: "简历原文片段；`score = null` 时为空串" }
+      additionalProperties: false
+
+    AbilityProfile:
+      type: object
+      description: |
+        六维能力画像（part3 spec §2.5①）。维度集合**冻结**：
+        `技术深度 · 工程能力 · 业务理解 · 项目影响力 · 协作沟通 · 成长性`。
+        `overall = Σ(维度分×权重) / Σ(权重)`，**由代码算**，四舍五入口径与 `matcher.score_of` 一致（AC28）。
+        某维 `score = null` 时 `overall` 按**已有维度**重新归一；算不出就留空，**不编分**。
+      required: [dimensions, overall]
+      properties:
+        dimensions: { type: array, items: { $ref: '#/components/schemas/AbilityDimension' } }
+        overall: { type: ['integer', 'null'], minimum: 0, maximum: 100, description: "`null` = 六维全算不出" }
       additionalProperties: false
 
     # ------------------------------------------------------------------ SSE
@@ -622,7 +733,7 @@ components:
     SseStageName:
       type: string
       description: 阶段枚举（part2 spec §2.4 **冻结，按序**）
-      enum: [accepted, parsed, cleaned, normalized, matched, recommended, llm]
+      enum: [accepted, parsed, cleaned, normalized, matched, recommended, llm, reviewed]
 
     SseStageStatus:
       type: string
@@ -647,7 +758,7 @@ components:
         elapsedMs: { type: integer }
         detail:
           type: object
-          description: "按阶段不同：`{bytes, sha256_8}` / `{pageCount}` / `{textLength, truncated}` / `{skillCount}` / `{score}` / `{candidateCount}` / `{llmUsed, degraded}` / 失败时 `{code}`"
+          description: "按阶段不同：`{bytes, sha256_8}` / `{pageCount}` / `{textLength, truncated}` / `{skillCount}` / `{score}` / `{candidateCount}` / `{llmUsed, degraded}` / `{verdictCount, directionCount}`（deep）/ 失败时 `{code}`"
           additionalProperties: true
       additionalProperties: false
 

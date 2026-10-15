@@ -101,3 +101,37 @@ MIN_ACTION_VERBS_FOR_NO_QUANTIFY = 1
 #: 全链 traceId 的 header 名。**唯一来源**：trace.py / logging.py / 测试都从这里 import，
 #: 不各自写字面量 —— 否则「某处改了 header 名、别处没改」会让全链 traceId 静默断裂。
 TRACE_ID_HEADER = "X-Trace-Id"
+
+# ---------------------------------------------------------------- part3：LLM 深度匹配分析（spec §2.2 / §2.5）
+
+#: 六个能力维度 —— **冻结集合**（spec §2.5①）。元组顺序 = 雷达图渲染顺序 = `abilityProfile.dimensions` 的稳定顺序。
+#:
+#: **真源是 `app/data/rubric.yaml`**，这里是**编译期镜像**：
+#: `test_rubric_consistency.py` 断言两处**逐字一致**，防「改了 YAML 忘了改常量」这种两处漂移
+#: （与 `skills.yaml` ↔ `skill` 表同一个思路）。因此**改维度集合要改三处**：spec §2.5 + rubric.yaml + 这里。
+DIMENSIONS: tuple[tuple[str, str], ...] = (
+    ("tech_depth", "技术深度"),
+    ("engineering", "工程能力"),
+    ("business", "业务理解"),
+    ("impact", "项目影响力"),
+    ("collaboration", "协作沟通"),
+    ("growth", "成长性"),
+)
+
+#: 逐条判定档位（spec §2.3 **冻结三档**，不许增删改名）。
+#: 用元组而不是 `Enum`：它同时被 `llm/client.py` 的解析器当**白名单**用（不在里面就丢该条），
+#: 与 `IssueType` 用 `Enum` 的场景不同 —— 这里要的是「可迭代的合法取值集合」。
+VERDICT_KINDS: tuple[str, ...] = ("satisfied", "partial", "missing")
+
+#: 分析深度（spec §2.2）。缺省 `standard` ⇒ 响应与 part2 **逐字节一致**（AC25，可一键回退）。
+ANALYSIS_DEPTHS: tuple[str, ...] = ("standard", "deep")
+DEFAULT_ANALYSIS_DEPTH = "standard"
+
+#: 推荐条数上限（C7）。**默认仍是 3**（= `RECOMMEND_TOP_N`），所以 AC17 不被破坏；
+#: 只有显式传 `topN` 时才变。
+MAX_TOP_N = 10
+DEFAULT_TOP_N = RECOMMEND_TOP_N
+
+#: `growthDirections` 条数上限（spec §2.3）。取 5 而不是 10：
+#: 「提升方向」要的是**聚焦**，给十个方向等于没给方向；而且方向越少，每条越可能被真的执行。
+MAX_GROWTH_DIRECTIONS = 5

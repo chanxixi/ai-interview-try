@@ -81,7 +81,7 @@ topN          : int, 1..10            默认 3（缺省即沿用常量）
 {
   // ... 既有 resume / issues / match / recommendations / meta 全部不动 ...
 
-  "verdicts": [                    // ★ 逐条判定（standard 时为空数组）
+  "verdicts": [                    // ★ 逐条判定（**standard 时该键不出现**）
     { "skill": "Redis", "importance": "required",
       "verdict": "missing",        // ★ satisfied | partial | missing
       "reason": "简历提到缓存优化，但未给出 Redis 使用证据",
@@ -118,6 +118,8 @@ topN          : int, 1..10            默认 3（缺省即沿用常量）
 - 每个分数（含 `overall`）**必须**同时挂 `rubricRef` 与 `evidence` —— **无出处的分数不允许出现**（AC27）。
 - `overall` **由代码算**：`Σ(维度分 × 维度权重) / Σ(权重)`，四舍五入口径与 `matcher.score_of` **一致**（`floor(x + 0.5)`，不用 Python 的银行家舍入）。
 - LLM **不产出** `overall`，也**不排序** `growthDirections`（排序由 `priority` 规则定）。
+- **`standard` 模式下这四个键（以及 `meta` 的 `analysisDepth` / `verdictCount` / `directionCount`）完全不出现** —— 只有「键不存在」，AC25 的「与 part2 逐字节一致」才**严格成立**（可写成快照断言）。
+  `deep` 模式下四个键**必定存在**：降级时前三个为空数组、`abilityProfile` 为 `null`。
 
 ### 2.4 SSE 事件协议（增量）
 

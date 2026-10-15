@@ -33,7 +33,7 @@
 
 | 任务 | 内容 | 完成标准（可当堂验证） |
 |---|---|---|
-| **N0.1** | 三份 OpenAPI 增量：请求 `analysisDepth` / `topN`；响应四块；SSE `reviewed` 阶段 | `git diff workspace/contracts/` **无 `-` 行**；三份 yaml 的 stage 列表都含 `reviewed` 且位置一致 |
+| **N0.1** | 三份 OpenAPI 增量：请求 `analysisDepth` / `topN`；响应四块；SSE `reviewed` 阶段 | 三份 yaml 的 `stages` 与 `SseStageName.enum` 都含 `reviewed` 且位置一致；`AnalysisResult` 含 4 新块且**未加进 `required`**（保 AC25）；所有 `$ref` 可解析；`git diff` 的 `-` 行**只允许出现在「枚举/列表追加」的 5 类行**上（`stages` / `enum` / stage 序列 / events 计数 / detail 说明），**不得有任何字段或语义被删除** |
 | **N0.2** | `analyzer/app/data/rubric.yaml`：六维**定义 + 可读信号** + 每维 ≥3 档 + 权重（按 level 分档） | 六维齐；**每维 `signals` 非空**；每维档位数 ≥3；**三档（校招 / 社招 / 高级）各自**权重和 = 1.0（±1e-9） |
 | **N0.3** | `core/constants.py`：`DIMENSIONS` / `VERDICT_KINDS` / `MAX_GROWTH_DIRECTIONS` | `test_rubric_consistency.py` 通过（六维与常量**逐字一致**，防两处漂移） |
 | **N1.1** | Prompt-3（**判定 + 六维档**）+ 解析器（严进：`verdict` / `level` 不认识就丢该条 / 该维） | 同一简历两次调用 `verdicts` 与 `dimensions` 档位完全一致；非法 JSON → 返回 `None` 而非抛错 |

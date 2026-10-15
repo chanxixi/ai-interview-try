@@ -1,0 +1,127 @@
+# 六维能力 rubric —— part3 的**唯一**维度真源（part3 spec §2.5①）
+#
+# 为什么是 YAML 而不是代码常量（ADR-204）：
+#   「哪个维度、几档、每档多少分、权重多少」都是**数据**。放进 YAML 之后，
+#   调档位 / 调权重**不改一行代码**（AC31），也能被 `test_rubric_consistency.py` 逐条校验。
+#   代码里只保留一份**编译期镜像**（`core/constants.py` 的 `DIMENSIONS`），两边由测试锁死 ——
+#   与 `skills.yaml` ↔ `skill` 表是同一个思路（防两处漂移）。
+#
+# 每个维度必须写清三样（spec §2.5① 的硬要求）：
+#   ① `question`   —— 这一维在问什么
+#   ② `signals`    —— 简历里出现哪些词/形态才算证据（给 LLM 当锚点，也是兜底判档的输入）
+#   ③ `levels`     —— 档位与分数；**分数只在这里定义一次**
+#
+# 两条硬性克制（spec §2.5.2）：
+#   ① 每个维度**必须有 L0「无证据」档** —— 软性维度（协作沟通 / 成长性）在简历里常常真的没证据，
+#      不给 L0 档，模型会硬编一个「看起来合理」的分数，比留空危险得多。
+#   ② 权重**不得平均**，按岗位 level 分档（见文件末尾 `weights`）。
+
+version: 1
+
+dimensions:
+
+  - key: tech_depth
+    name: 技术深度
+    question: 对所用技术是「用过」还是「懂原理、能定位问题」？
+    signals:
+      strong: [JVM, 索引优化, 并发, 锁, 内存泄漏, 选型权衡, 故障定位, 调优, 底层原理]
+      weak: [熟悉, 了解, 使用过, 会用]
+    levels:
+      - { key: L0, label: 无证据, score: 0,  hint: 简历里没有任何技术实现细节 }
+      - { key: L1, label: 会使用, score: 40, hint: 只列技术名词，或只写「熟悉 / 了解」 }
+      - { key: L2, label: 有实现, score: 65, hint: 有具体实现动作与使用场景 }
+      - { key: L3, label: 有优化, score: 80, hint: 性能 / 稳定性优化，且带数字 }
+      - { key: L4, label: 有深度, score: 95, hint: 涉及原理、选型权衡、线上故障定位 }
+
+  - key: engineering
+    name: 工程能力
+    question: 有没有把工程做「能维护」的意识？
+    signals:
+      strong: [CI, CD, 单元测试, 集成测试, 监控, 告警, 日志, 灰度, 部署, CodeReview, 文档, 自动化]
+      weak: [Docker, Git, Maven, 命令行]
+    levels:
+      - { key: L0, label: 无证据, score: 0,  hint: 完全没有工程化痕迹 }
+      - { key: L1, label: 会用工具, score: 40, hint: 只列了工具名（Docker / Git 等） }
+      - { key: L2, label: 有实践, score: 65, hint: 提到测试 / 部署 / 日志中的一项 }
+      - { key: L3, label: 成体系, score: 85, hint: CI/CD、监控告警、规范中命中 ≥2 项 }
+
+  - key: business
+    name: 业务理解
+    question: 能不能说清「为谁解决什么问题、带来什么指标」？
+    signals:
+      strong: [GMV, 转化率, 留存, DAU, MAU, 订单, 支付, 风控, 履约, P99, 成本]
+      weak: [业务, 需求, 用户]
+    levels:
+      - { key: L0, label: 无证据, score: 0,  hint: 全是技术描述，看不出服务什么业务 }
+      - { key: L1, label: 纯技术, score: 35, hint: 只有技术栈与实现过程 }
+      - { key: L2, label: 提业务域, score: 60, hint: 提到业务域名词，但没有指标 }
+      - { key: L3, label: 指标驱动, score: 85, hint: 业务指标 + 业务域同时出现 }
+
+  - key: impact
+    name: 项目影响力
+    question: 做的事有多大、有没有结果？
+    # ⚠️ 这一维的兜底判据**复用** `rules.py` 的 `_check_no_quantify`（数字 + 动作动词），
+    #    禁止另写一套 —— 否则同一件事（"缺量化"）会有两套判据并漂移（spec §2.5.1 / plan §8 风险 9）。
+    signals:
+      strong: [百分比, ms, 毫秒, QPS, TPS, 万级, 亿级, 用户数, 数据量, 主导, owner, 从 0 到 1]
+      weak: [负责, 参与, 完成]
+    levels:
+      - { key: L0, label: 无证据, score: 0,  hint: 没有任何动作或结果描述 }
+      - { key: L1, label: 只有动作, score: 35, hint: 只写「负责 / 参与」，没有结果 }
+      - { key: L2, label: 有结果, score: 65, hint: 有量化结果（数字 / 百分比） }
+      - { key: L3, label: 有规模, score: 88, hint: 量化结果 + 规模（用户数 / 数据量 / QPS） }
+
+  - key: collaboration
+    name: 协作沟通
+    question: 有没有**可查的**「与人协作并交付」的证据？
+    # ⚠️ 这一维**天生弱证据**：简历里常常只有「团队协作能力强」这类自述。
+    #    L0 是常态，**不是缺点** —— 前端必须显示「无依据」，不得画成 0 分（spec §2.5.2 ①）。
+    signals:
+      strong: [主导, 推动, 跨部门, 对接, 评审, 带团队, 人团队, 开源, 技术分享, 培训]
+      weak: [协作, 团队, 沟通, 配合]
+    levels:
+      - { key: L0, label: 无证据, score: 0,  hint: 没有任何协作线索 —— **这是常态，不是缺点** }
+      - { key: L1, label: 自述, score: 30, hint: 只有「团队协作能力强」这类自述 }
+      - { key: L2, label: 有角色, score: 60, hint: 出现主导 / 推动 / 跨部门等角色词 }
+      - { key: L3, label: 有规模, score: 85, hint: 角色词 + 团队规模 / 跨部门范围 }
+
+  - key: growth
+    name: 成长性
+    question: 时间线上有没有「越做越难」的痕迹？
+    # 这一维**可纯代码算**（时间线递进，与 `rules.py` 的 `_check_timeline_gap` 同源正则）。
+    signals:
+      strong: [晋升, 高级, 资深, 架构, 从 0 到 1, 新技术, 转型, 自学, 开源贡献]
+      weak: [学习, 提升]
+    levels:
+      - { key: L0, label: 无证据, score: 0,  hint: 没有可读的时间线或演进痕迹 }
+      - { key: L1, label: 平铺, score: 35, hint: 有经历但看不出难度递进 }
+      - { key: L2, label: 连续, score: 60, hint: 时间线连续、无明显断档 }
+      - { key: L3, label: 有递进, score: 85, hint: 职责 / 技术栈 / 职级有明确演进 }
+
+# 权重：按岗位 level 分档（spec §2.5.2 ②）。**每档之和必须为 1.0**（`test_rubric_consistency.py` 守）。
+# 口径（写死，别随手调）：
+#   校招档 **压「项目影响力」** —— 校招生本就没多少影响力可谈，权重高会让所有人分数难看；抬「成长性」。
+#   社招 / 高级档**反向** —— 更看结果与业务，成长性让位。
+# 改权重**只改这里**，不改代码（DoD 12）。
+weights:
+  campus:
+    tech_depth: 0.30
+    engineering: 0.25
+    business: 0.10
+    impact: 0.10
+    collaboration: 0.10
+    growth: 0.15
+  mid:
+    tech_depth: 0.30
+    engineering: 0.30
+    business: 0.15
+    impact: 0.10
+    collaboration: 0.05
+    growth: 0.10
+  senior:
+    tech_depth: 0.25
+    engineering: 0.25
+    business: 0.25
+    impact: 0.15
+    collaboration: 0.05
+    growth: 0.05
