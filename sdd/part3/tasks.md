@@ -34,10 +34,10 @@
 | 任务 | 内容 | 完成标准（可当堂验证） |
 |---|---|---|
 | **N0.1** | 三份 OpenAPI 增量：请求 `analysisDepth` / `topN`；响应四块；SSE `reviewed` 阶段 | `git diff workspace/contracts/` **无 `-` 行**；三份 yaml 的 stage 列表都含 `reviewed` 且位置一致 |
-| **N0.2** | `analyzer/app/data/rubric.yaml`：六维定义 + 每维 ≥3 档 + 权重（按 level 分档） | 六维齐；每维档位数 ≥3；每个 level 的权重和 = 1.0（±1e-9） |
+| **N0.2** | `analyzer/app/data/rubric.yaml`：六维**定义 + 可读信号** + 每维 ≥3 档 + 权重（按 level 分档） | 六维齐；**每维 `signals` 非空**；每维档位数 ≥3；**三档（校招 / 社招 / 高级）各自**权重和 = 1.0（±1e-9） |
 | **N0.3** | `core/constants.py`：`DIMENSIONS` / `VERDICT_KINDS` / `MAX_GROWTH_DIRECTIONS` | `test_rubric_consistency.py` 通过（六维与常量**逐字一致**，防两处漂移） |
 | **N1.1** | Prompt-3（**判定 + 六维档**）+ 解析器（严进：`verdict` / `level` 不认识就丢该条 / 该维） | 同一简历两次调用 `verdicts` 与 `dimensions` 档位完全一致；非法 JSON → 返回 `None` 而非抛错 |
-| **N1.2** | `service/advisor_rules.py`：判定兜底（`match.matched`→satisfied、`missing`→missing） | 断 LLM 时 `verdicts` 条数 **= `match` 条数**，且每条 `reason` 非空 |
+| **N1.2** | `service/advisor_rules.py`：判定兜底（`match.matched`→satisfied、`missing`→missing）+ **六维判档兜底**（消费 `rubric.yaml` 的 `signals`） | 断 LLM 时 `verdicts` 条数 **= `match` 条数** 且每条 `reason` 非空；**六维也全有档位**（其中 `项目影响力` / `成长性` 与 LLM 无关，必须独立可算） |
 | **N1.3** | `llm/client.py` +`stream_review(...)`，沿用三层降级 | 未配置 / 连接失败 / 非法 JSON 三种情况都返回 `LlmFinished(...)` 而**不抛异常**（与现有 `stream_issues` 同断言） |
 | **N2.1** | `service/ability_profile.py`：维度分归一 + **加权求和**（`floor(x+0.5)`） | 手算一个用例：`Σ(分×权重)/Σ(权重)` 与 `overall` **相等**（AC28） |
 | **N2.2** | 维度算不出 → `score=null` 且 `overall` 按已有维度归一 | 构造「缺一维」用例：该维 `score=null`、`overall` 等于其余维归一结果；**没有编分** |
@@ -87,6 +87,7 @@
 12. 改**权重** → **只改 `rubric.yaml`**，禁止改代码（有测试守）
 13. 改 **prompt** → 必须复跑「断 LLM 降级」用例，确认兜底仍非空
 14. 改 **`reviewed` 阶段位置** → 同步 spec §2.4 + 三份 yaml + 前端阶段标签三处
+15. 改**可读信号（`signals`）** → 同步 `rubric.yaml` + `advisor_rules.py` 判据 **两处**（兜底判据消费 signals，只改一处会静默失效）
 
 ## 附录 C · 提交审核增补
 

@@ -33,7 +33,7 @@
 | **203** | 综合分**代码算**（`ability_profile.py` 唯一公式） | spec §2.7 禁 LLM 打分；`matcher.py` 先例 | 需要维度权重数据 |
 | **204** | 维度定义与权重放 **`rubric.yaml`（数据）** | 改维度/改权重不改代码（与 `skills.yaml` 同思路） | 多一份要校验的数据文件 |
 | **205** | **判定 + 六维档同一次调用**（Prompt-3）；**文案第二次**（Prompt-4） | 两者输入完全相同且互不依赖，合并零成本还省一次往返；文案依赖判定结果，只能第二次 | 两次 LLM 往返，超时预算要放宽（见 §6.1） |
-| **206** | 判定退化 = **集合级事实** | 断 LLM 也要有「可解释的逐条结论」 | 兜底文案不如 LLM 细 |
+| **206** | **判定 + 六维退化 = 集合级事实 + 规则判档** | 断 LLM 也要有可解释的结论；其中 `项目影响力` / `成长性` 两维**纯代码算**，不依赖 LLM | 兜底档位比 LLM 粗，文案不如 LLM 细 |
 | **207** | `reviewed` **独立阶段**，不塞进 `llm` | 两段耗时差异大，进度条不说谎 | SSE 契约变更（C5），前端要加阶段标签 |
 | **208** | 维度算不出**留空不编分** | 编分是误导；`overall` 按已有维度归一 | `overall` 与「全维」不可直接比较（要说明） |
 | **209** | 权重按**岗位 level 分档** | 同岗位不同级别要求不同 | 权重表要维护 |
@@ -49,7 +49,7 @@
 | 简历结构化结果 | 内存，随 SSE 下发 | ❌ | 不持久化（part2 沿用） |
 | 岗位 / 岗位技能要求 | MySQL（Java 侧） | ❌ | 已有 |
 | **维度权重** | `rubric.yaml`（仓库）+ Java 装配 | ✅ | 要**可审计、可复现** |
-| rubric 定义与分级 | `analyzer/app/data/rubric.yaml` | ✅ | 与 `skills.yaml` 同思路 |
+| rubric 定义 / 可读信号 / 分级 | `analyzer/app/data/rubric.yaml` | ✅ | 与 `skills.yaml` 同思路 |
 | 分析历史 | **本期不落**（part2 §4.8 `analysis_record` 扩展位） | ❌ | 鉴权属 Out of Scope |
 
 ---
@@ -58,11 +58,11 @@
 
 ```
 workspace/apps/analyzer/app/
-├─ data/rubric.yaml                     ★ 六维定义 + 分级 + 权重（按 level 分档）
+├─ data/rubric.yaml                     ★ 六维定义 + 可读信号 + 分级 + 权重（按 level 分档）
 ├─ llm/prompts.py                       ★ +Prompt-3（判定 + 六维档）/ +Prompt-4（优化点·方向文案）
 ├─ llm/client.py                        ★ +stream_review(...)（沿用三层降级形状）
 ├─ service/ability_profile.py           ★ 六维分与 overall 的**唯一**公式（代码算）
-├─ service/advisor_rules.py             ★ 判定 / 优化点 / 方向的**规则兜底**
+├─ service/advisor_rules.py             ★ 判定 / **六维判档** / 优化点 / 方向的**规则兜底**
 ├─ service/analysis_stream_service.py   ★ +reviewed 阶段接线
 ├─ schema/response/analyze_response.py  ★ +4 块模型（增量，不动已有字段）
 └─ core/constants.py                    ★ DIMENSIONS / VERDICT_KINDS / MAX_GROWTH_DIRECTIONS
@@ -80,7 +80,7 @@ workspace/apps/web/src/pages/analyzer/components/
 | 文件 | 唯一职责 |
 |---|---|
 | `analyzer/service/ability_profile.py` | **唯一**实现维度分与 `overall` 公式的地方（与 `matcher.py` 是唯一打分公式同源） |
-| `analyzer/app/data/rubric.yaml` | **唯一**的维度定义 / 分级 / 权重真源 |
+| `analyzer/app/data/rubric.yaml` | **唯一**的维度定义 / 可读信号 / 分级 / 权重真源 |
 
 ---
 
@@ -102,7 +102,9 @@ workspace/apps/web/src/pages/analyzer/components/
 ### 6.2 降级路径（在 part2 §6.2 基础上追加）
 
 ```
-deep 但 LLM 不可用     → 四块降级：verdicts 走集合级事实 · 方向走规则模板 → degraded=true
+deep 但 LLM 不可用     → 四块降级：verdicts 走集合级事实 · **abilityProfile 走 advisor_rules 判档**
+                        · 方向走规则模板 → degraded=true
+                        （其中 `项目影响力` / `成长性` 两维**纯代码算**，断 LLM 也照常出档）
 某维度算不出           → 该维度 score=null，overall 按已有维度归一（**不编分**）
 rubric.yaml 缺失/损坏  → 启动 WARN + abilityProfile=null（不阻塞主流程，主流程仍有 match/推荐）
 ```
@@ -176,6 +178,8 @@ rubric.yaml 缺失/损坏  → 启动 WARN + abilityProfile=null（不阻塞主�
 | 5 | prompt 里塞整套 rubric | 只注入与岗位相关的片段；裁剪逻辑在代码里（可测） |
 | 6 | 新字段撑爆响应体 | `verdicts` 只保留技能级摘要，完整双向证据仍留在 `match` |
 | 7 | `standard` 路径被新代码污染 | AC25 断言 standard 响应形状与 part2 **逐字节一致** |
+| 8 | **软性维度被编分**（模型给「协作沟通」/「成长性」一个看起来合理的假档位） | `rubric.yaml` 每维**必须有 `L0` 档**；解析器要求 `evidence` 非空才算数（spec §2.5.2 ①） |
+| 9 | `NO_QUANTIFY` 与 `项目影响力` 被实现成**两套判据**（同源漂移） | 兜底判据**复用** `rules._check_no_quantify`，禁止另写一套（spec §2.5.1） |
 
 ---
 
@@ -201,8 +205,8 @@ bash workspace/scripts/smoke-stream.sh
 
 | 层 | 新增检查 |
 |---|---|
-| analyzer | `test_ability_profile.py`（手算对照 + 缺维归一）· `test_advisor_rules.py`（兜底非空 + 确定性）· `test_stream.py` +`reviewed` 阶段与 standard 模式不出现 |
-| analyzer | `test_rubric_consistency.py`（六维齐、每维 ≥3 档、权重和为 1）—— 与 `test_seed_consistency.py` 同思路 |
+| analyzer | `test_ability_profile.py`（手算对照 + 缺维归一）· `test_advisor_rules.py`（兜底非空 + 确定性 + **六维判档确定性**）· `test_stream.py` +`reviewed` 阶段与 standard 模式不出现 |
+| analyzer | `test_rubric_consistency.py`（六维齐、每维 **`signals` 非空**、每维 ≥3 档、每个 level 权重和为 1）—— 与 `test_seed_consistency.py` 同思路 |
 | bff | `stream.e2e.test.ts` 增 `deep` 用例（四块存在） |
 | job-service | 候选集装配含维度权重（DTO 字段非空断言） |
 | web | `VerdictList.spec.ts`（standard 响应不渲染新面板且不报错） |
@@ -214,8 +218,8 @@ bash workspace/scripts/smoke-stream.sh
 | 时段 | 动作 | 里程碑 |
 |---|---|---|
 | 0:00–0:15 | 契约增量冻结（C5–C7）+ `rubric.yaml` | 契约冻结 |
-| 0:15–0:45 | 逐条判定（Prompt-3 + 解析 + 兜底） | 判定可复现 |
-| 0:45–1:05 | `ability_profile`（代码算）+ 权重装配 | AC28 手算通过 |
+| 0:15–0:45 | 逐条判定 + 六维档（Prompt-3 + 解析 + 兜底） | 判定与档位都可复现 |
+| 0:45–1:05 | `ability_profile`（档位→分数 + 加权）+ `advisor_rules` 六维判档 + 权重装配 | AC28 手算通过 |
 | 1:05–1:35 | 优化点 + 提升方向（Prompt-4 + 兜底） | 四块齐全 |
 | 1:35–1:55 | SSE `reviewed` 阶段 + 三份契约同步 | `curl -N` 事件序列完整 |
 | 1:55–2:20 | 前端面板（雷达 + 判定列表 + 出处） | 浏览器可演示 |
