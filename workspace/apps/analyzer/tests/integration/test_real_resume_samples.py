@@ -10,14 +10,11 @@ M2 的验收标准是「真实 PDF 抽出干净文本」，只有真样本能证
 """
 
 from __future__ import annotations
-
 import pathlib
-
 import pytest
-
 from app.core.constants import PDF_MAX_PAGES, PDF_MIN_TEXT_LAYER_CHARS, RESUME_MAX_LENGTH
-from app.service.cleaner import clean, is_printable_ratio
-from app.service.pdf_parser import parse_pdf
+from app.service.document.cleaner import clean, is_printable_ratio
+from app.service.document.pdf_parser import parse_pdf
 
 _ANALYZER_ROOT = pathlib.Path(__file__).resolve().parents[2]
 

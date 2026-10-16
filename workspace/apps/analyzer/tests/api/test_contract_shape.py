@@ -81,3 +81,65 @@ def test_meta_carries_degradation_evidence(client: TestClient) -> None:
     assert meta["source"] in ("pdf", "text")
     assert isinstance(meta["truncated"], bool)
     assert isinstance(meta["recommendationCount"], int)
+
+
+# ------------------------------------------------------------------ part3：深模型的形状边界
+
+
+def test_standard_sync_response_has_no_part3_keys(client: TestClient) -> None:
+    """**AC25 的同步侧**：同步端点（part2 形状）绝不出现 part3 的键。
+
+    这条守的是「两个模型」的设计：`AnalyzeResponse` 上根本没有那 4 个字段，
+    所以哪怕有人把 `DeepAnalysisResult` 顺手塞进 `response_model`，这里也会红。
+    """
+    body = _analyze(client)
+
+    for key in ("verdicts", "improvements", "growthDirections", "abilityProfile"):
+        assert key not in body
+    for key in ("analysisDepth", "verdictCount", "directionCount"):
+        assert key not in body["meta"]
+
+
+def test_deep_result_declares_part3_blocks_without_touching_part2_ones() -> None:
+    """`DeepAnalysisResult` 必须是「part2 五块 + part3 四块」，且**继承**自 part2 模型。"""
+    from app.schema.response.analyze_response import (
+        AnalyzeResponse,
+        DeepAnalysisResult,
+        DeepMeta,
+        Meta,
+    )
+
+    assert issubclass(DeepAnalysisResult, AnalyzeResponse)
+    assert issubclass(DeepMeta, Meta)
+
+    deep_fields = set(DeepAnalysisResult.model_fields)
+    part2_fields = set(AnalyzeResponse.model_fields)
+    assert part2_fields <= deep_fields
+    assert deep_fields - part2_fields == {
+        "verdicts",
+        "improvements",
+        "growthDirections",
+        "abilityProfile",
+    }
+    assert set(DeepMeta.model_fields) - set(Meta.model_fields) == {
+        "analysisDepth",
+        "verdictCount",
+        "directionCount",
+    }
+
+
+def test_frozen_enums_match_their_constants() -> None:
+    """枚举与 `core/constants.py` 的元组必须一致 —— 同一份契约的两种表达，防两处漂移。"""
+    from app.core.constants import ANALYSIS_DEPTHS, VERDICT_KINDS
+    from app.schema.response.analyze_response import AnalysisDepth, VerdictKind
+
+    assert tuple(item.value for item in AnalysisDepth) == ANALYSIS_DEPTHS
+    assert tuple(item.value for item in VerdictKind) == VERDICT_KINDS
+
+
+def test_sse_stage_enum_matches_the_contract_enum() -> None:
+    """`StageName` 的顺序即契约里 `SseStageName.enum` 的顺序（`reviewed` 必须在末尾）。"""
+    from app.schema.response.sse_event import STAGE_ORDER, StageName
+
+    assert [stage.value for stage in STAGE_ORDER] == [stage.value for stage in StageName]
+    assert STAGE_ORDER[-1] is StageName.REVIEWED

@@ -11,18 +11,15 @@
 """
 
 from __future__ import annotations
-
 import json
 import time
 from pathlib import Path
-
 import pytest
-
-from app.service.cleaner import clean
-from app.service.matcher import Requirement, ResumeSkills
-from app.service.normalizer import get_dictionary
-from app.service.parser_plugin import default_registry
-from app.service.recommender import JobCandidate, recommend
+from app.service.document.cleaner import clean
+from app.service.match.matcher import Requirement, ResumeSkills
+from app.service.skill.normalizer import get_dictionary
+from app.service.document.parser_plugin import default_registry
+from app.service.match.recommender import JobCandidate, recommend
 
 
 @pytest.fixture(scope="module")

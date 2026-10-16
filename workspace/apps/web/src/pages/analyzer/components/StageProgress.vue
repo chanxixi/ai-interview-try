@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 
-import { STAGE_LABEL, STAGE_ORDER, type StageName } from '../../../api/analysis';
+import { STAGE_LABEL, type StageName } from '../../../api/analysis';
 import type { StageState } from '../composables/useAnalysisStream';
 
 /**
@@ -27,10 +27,15 @@ const props = defineProps<{
   streaming: boolean;
 }>();
 
-/** 当前进行到第几步：最后一个「已出现」的阶段的序号。 */
+/**
+ * 当前进行到第几步：最后一个「已出现」的阶段的序号。
+ *
+ * ⚠️ 用 `props.stages.length` 而不是全局 `STAGE_ORDER.length` —— 阶段数取决于
+ * **本次请求的深度**（`standard` 7 格 / `deep` 8 格），而 `stages` 已经按深度建好了。
+ */
 const activeIndex = computed(() => {
   const index = props.stages.findIndex((s) => s.status === 'pending');
-  return index === -1 ? STAGE_ORDER.length : index;
+  return index === -1 ? props.stages.length : index;
 });
 
 function statusOf(stage: StageName): 'wait' | 'process' | 'finish' | 'error' {
@@ -67,6 +72,13 @@ function detailOf(stage: StageName): string {
   if (typeof detail.issueCount === 'number') {
     bits.push(`${detail.issueCount} 条建议`);
   }
+  // part3：`reviewed` 阶段的事实 —— 判了几条要求、给了几个提方向
+  if (typeof detail.verdictCount === 'number') {
+    bits.push(`${detail.verdictCount} 条判定`);
+  }
+  if (typeof detail.directionCount === 'number') {
+    bits.push(`${detail.directionCount} 个方向`);
+  }
   if (bits.length === 0 && state.elapsedMs > 0) {
     bits.push(`${state.elapsedMs} ms`);
   }
@@ -80,11 +92,11 @@ function detailOf(stage: StageName): string {
 
     <el-steps :active="activeIndex" align-center finish-status="success">
       <el-step
-        v-for="stage in STAGE_ORDER"
-        :key="stage"
-        :title="STAGE_LABEL[stage]"
-        :description="detailOf(stage)"
-        :status="statusOf(stage)"
+        v-for="item in props.stages"
+        :key="item.stage"
+        :title="STAGE_LABEL[item.stage]"
+        :description="detailOf(item.stage)"
+        :status="statusOf(item.stage)"
       />
     </el-steps>
 

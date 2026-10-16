@@ -1,5 +1,6 @@
 package com.careerlens.jobservice.controller.internal;
 
+import com.careerlens.jobservice.dto.response.CapabilitiesResponse;
 import com.careerlens.jobservice.dto.response.PingResponse;
 import com.careerlens.jobservice.service.InternalService;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -31,5 +32,10 @@ public class InternalController {
     @GetMapping("/ping")
     public PingResponse ping() {
         return internalService.ping();
+    }
+
+    @GetMapping("/capabilities")
+    public CapabilitiesResponse capabilities() {
+        return internalService.capabilities();
     }
 }

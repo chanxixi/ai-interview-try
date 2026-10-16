@@ -1,5 +1,6 @@
 import type { JobServiceClient } from '../../src/client/jobService.client';
 import { AnalysisController } from '../../src/controller/analysis.controller';
+import { CapabilitiesController } from '../../src/controller/capabilities.controller';
 import { HealthController } from '../../src/controller/health.controller';
 import { JobController } from '../../src/controller/job.controller';
 import { createJobService } from '../../src/service/job.service';
@@ -21,6 +22,7 @@ export function containerWithJobServiceClient(jobServiceClient: JobServiceClient
     controllers: {
       health: new HealthController(),
       job: new JobController(createJobService({ jobService: jobServiceClient })),
+      capabilities: new CapabilitiesController(createJobService({ jobService: jobServiceClient })),
       analysis: new AnalysisController(createAnalysisDeps()),
     },
   };

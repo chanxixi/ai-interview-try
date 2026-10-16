@@ -20,7 +20,14 @@ describe('unit · JobService.ping', () => {
     downstream: { service: 'analyzer', status: 'ok', runtime: 'python 3.13.14', traceId: 't-1' },
   };
 
-  const stubClient = (impl: JobServiceClient['ping']): JobServiceClient => ({ ping: impl });
+  const stubClient = (
+    impl: JobServiceClient['ping'],
+    capabilities: JobServiceClient['capabilities'] = async () => ({
+      service: 'job-service',
+      analyzerReachable: true,
+      llmEnabled: true,
+    }),
+  ): JobServiceClient => ({ ping: impl, capabilities });
 
   it('把本跳信息包在下游结果外层（前端据此逐跳渲染）', async () => {
     const service = createJobService({ jobService: stubClient(async () => downstreamResult) });
@@ -65,6 +72,69 @@ describe('unit · JobService.ping', () => {
     });
 
     await expect(service.ping('trace-d')).rejects.toMatchObject({
+      status: 503,
+      code: 'SERVICE_UNAVAILABLE',
+    });
+  });
+});
+
+describe('unit · JobService.capabilities', () => {
+  /** 下游给出的完整诊断形状 —— Service 必须把它裁剪成前端决策所需的最小事实。 */
+  const upstream = (overrides: { analyzerReachable?: boolean; llmEnabled?: boolean } = {}) => ({
+    service: 'job-service',
+    analyzerReachable: overrides.analyzerReachable ?? true,
+    llmEnabled: overrides.llmEnabled ?? true,
+    error: 'should-not-leak-to-frontend',
+  });
+
+  it('只保留能力布尔值，裁掉 service / error 等诊断字段', async () => {
+    const service = createJobService({
+      jobService: {
+        ping: async () => {
+          throw new Error('unused in this suite');
+        },
+        capabilities: async () => upstream({ llmEnabled: false }),
+      },
+    });
+
+    const result = await service.capabilities('trace-cap');
+
+    // 逐字相等：多一个字段就说明「裁剪」这一步被绕过了
+    expect(result).toEqual({ llmEnabled: false, analyzerReachable: true });
+  });
+
+  it('把 traceId 原样交给下游（全链一致的前提）', async () => {
+    const seen: string[] = [];
+    const service = createJobService({
+      jobService: {
+        ping: async () => {
+          throw new Error('unused in this suite');
+        },
+        capabilities: async (traceId) => {
+          seen.push(traceId);
+          return upstream();
+        },
+      },
+    });
+
+    await service.capabilities('trace-z');
+
+    expect(seen).toEqual(['trace-z']);
+  });
+
+  it('下游异常原样上抛，由 errorHandler 统一映射（本层不吞异常）', async () => {
+    const service = createJobService({
+      jobService: {
+        ping: async () => {
+          throw new Error('unused in this suite');
+        },
+        capabilities: async () => {
+          throw AppError.serviceUnavailable('job-service');
+        },
+      },
+    });
+
+    await expect(service.capabilities('trace-e')).rejects.toMatchObject({
       status: 503,
       code: 'SERVICE_UNAVAILABLE',
     });

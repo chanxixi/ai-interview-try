@@ -1,4 +1,5 @@
 import { config } from '../config';
+import type { UpstreamCapabilities } from '../dto/response/capabilities.response';
 import type { PingResult } from '../dto/response/ping.response';
 import { requestJson } from './http';
 
@@ -16,6 +17,8 @@ import { requestJson } from './http';
 export interface JobServiceClient {
   /** 全链连通性探针，返回 job-service 及其下游（analyzer）的结果 */
   ping(traceId: string): Promise<PingResult>;
+  /** 能力探测：返回 job-service 及其下游（analyzer）的能力开关 */
+  capabilities(traceId: string): Promise<UpstreamCapabilities>;
 }
 
 export function createJobServiceClient(): JobServiceClient {
@@ -24,6 +27,14 @@ export function createJobServiceClient(): JobServiceClient {
       return requestJson<PingResult>({
         service: 'job-service',
         url: `${config.jobService.baseUrl}/internal/ping`,
+        timeoutMs: config.jobService.timeoutMs,
+        traceId,
+      });
+    },
+    capabilities(traceId: string): Promise<UpstreamCapabilities> {
+      return requestJson<UpstreamCapabilities>({
+        service: 'job-service',
+        url: `${config.jobService.baseUrl}/internal/capabilities`,
         timeoutMs: config.jobService.timeoutMs,
         traceId,
       });

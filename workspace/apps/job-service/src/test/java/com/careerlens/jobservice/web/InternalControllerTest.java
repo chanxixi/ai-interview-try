@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.careerlens.jobservice.controller.internal.InternalController;
+import com.careerlens.jobservice.dto.response.CapabilitiesResponse;
 import com.careerlens.jobservice.dto.response.PingResponse;
 import com.careerlens.jobservice.service.InternalService;
 import org.junit.jupiter.api.Test;
@@ -63,5 +64,32 @@ class InternalControllerTest {
                 .andExpect(jsonPath("$.downstream.error").value("ResourceAccessException"))
                 .andExpect(jsonPath("$.downstream.version").doesNotExist())
                 .andExpect(jsonPath("$.downstream.runtime").doesNotExist());
+    }
+
+    @Test
+    void capabilitiesSerializesAnalyzerCapabilityWhenUp() throws Exception {
+        when(internalService.capabilities()).thenReturn(
+                new CapabilitiesResponse("job-service", true, true, null));
+
+        mockMvc.perform(get("/internal/capabilities"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.service").value("job-service"))
+                .andExpect(jsonPath("$.analyzerReachable").value(true))
+                .andExpect(jsonPath("$.llmEnabled").value(true))
+                // 可达时不得出现 error 字段（NON_NULL 的语义保证）
+                .andExpect(jsonPath("$.error").doesNotExist());
+    }
+
+    @Test
+    void capabilitiesSerializesUnreachableWithoutLeakingStack() throws Exception {
+        when(internalService.capabilities()).thenReturn(
+                new CapabilitiesResponse("job-service", false, false, "ResourceAccessException"));
+
+        mockMvc.perform(get("/internal/capabilities"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.analyzerReachable").value(false))
+                // 未知能力一律按不可用回报，避免前端放开只能规则兜底的功能
+                .andExpect(jsonPath("$.llmEnabled").value(false))
+                .andExpect(jsonPath("$.error").value("ResourceAccessException"));
     }
 }

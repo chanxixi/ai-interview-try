@@ -2,21 +2,22 @@
 
 **为什么事件类型和 stage 枚举要单独一个文件**：
 它们是契约的一部分，三个消费方都从这里 import ——
-① `service/analysis_stream_service.py`（生产）② `api/v1/stream.py`（透传）
+① `service/orchestration/stream.py`（生产）② `api/v1/stream.py`（透传）
 ③ `tests/unit/test_stream.py`（断言）。任何一方写字面量，就会出现
 「某处把 `recommended` 写成 `recommend`」而这种只有端到端才发现的错。
 
 **stage 顺序是冻结的**（spec §2.4）：`accepted → parsed → cleaned → normalized
-→ matched → recommended → llm`。`STAGE_ORDER` 是唯一真源，测试断言
-「收到的 stage 序列 == STAGE_ORDER」而不是手写一遍列表。
+→ matched → recommended → llm → reviewed`（`reviewed` 为 part3 新增，C5）。
+`STAGE_ORDER` 是唯一真源，测试断言「收到的 stage 序列 == STAGE_ORDER」而不是手写一遍列表。
+
+⚠️ **`standard` 模式下不发 `reviewed`**（spec §2.4）：否则进度条多一格却没内容。
+所以冻结点是「`STAGE_ORDER` 定义了**最大**阶段集」，实际发出的前缀取决于深度。
 """
 
 from __future__ import annotations
-
 from dataclasses import dataclass, field
 from enum import Enum
-
-from app.util.sse import format_event
+from app.util.http.sse import format_event
 
 
 class SseEventType(str, Enum):
@@ -31,7 +32,11 @@ class SseEventType(str, Enum):
 
 
 class StageName(str, Enum):
-    """7 个 stage（spec §2.4 冻结，按序）。"""
+    """8 个 stage。
+
+    part2 是 7 个；part3 在 `llm` 之后、`result` 之前**插入** `reviewed`（C5）——
+    「逐条判定」是独立的一段耗时，塞进 `llm` 会让进度条**说谎**（ADR-207）。
+    """
 
     ACCEPTED = "accepted"
     PARSED = "parsed"
@@ -40,6 +45,7 @@ class StageName(str, Enum):
     MATCHED = "matched"
     RECOMMENDED = "recommended"
     LLM = "llm"
+    REVIEWED = "reviewed"
 
 
 #: 冻结顺序。**唯一真源** —— 测试与服务都从这里取，不手写。
@@ -51,6 +57,7 @@ STAGE_ORDER: tuple[StageName, ...] = (
     StageName.MATCHED,
     StageName.RECOMMENDED,
     StageName.LLM,
+    StageName.REVIEWED,
 )
 
 

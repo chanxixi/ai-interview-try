@@ -1,5 +1,6 @@
 package com.careerlens.jobservice.repository;
 
+import com.careerlens.jobservice.config.rubric.RubricWeightsProvider;
 import com.careerlens.jobservice.dto.JobCandidateDto;
 import com.careerlens.jobservice.entity.JobEntity;
 import com.careerlens.jobservice.entity.JobRequirementEntity;
@@ -14,6 +15,7 @@ import org.springframework.test.context.TestPropertySource;
 
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -69,6 +71,18 @@ class RequirementRepositoryTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    /**
+     * 装配服务（part3 起多一个权重装配依赖）。
+     *
+     * <p>{@code RubricWeightsProvider} 直接 new —— 它是无状态、无外部依赖的纯读文件组件，
+     * 走 Spring 容器只会让这个 {@code @DataJpaTest} 多背一份上下文。
+     */
+    private AnalysisOrchestrationService orchestrationService() {
+        return new AnalysisOrchestrationService(
+                jobRepository, requirementRepository, categoryRepository, skillRepository,
+                new RubricWeightsProvider());
+    }
 
     // ------------------------------------------------------------------ 种子导入
 
@@ -162,8 +176,7 @@ class RequirementRepositoryTest {
 
     @Test
     void assembled_candidates_carry_canonical_skills_and_no_jd_text() {
-        AnalysisOrchestrationService service = new AnalysisOrchestrationService(
-                jobRepository, requirementRepository, categoryRepository, skillRepository);
+        AnalysisOrchestrationService service = orchestrationService();
 
         List<JobCandidateDto> candidates = service.assembleCandidates();
 
@@ -193,11 +206,54 @@ class RequirementRepositoryTest {
 
     @Test
     void findJdTextByJobId_returns_the_target_job_jd() {
-        AnalysisOrchestrationService service = new AnalysisOrchestrationService(
-                jobRepository, requirementRepository, categoryRepository, skillRepository);
+        AnalysisOrchestrationService service = orchestrationService();
 
         assertThat(service.findJdTextByJobId("job-backend-01")).isPresent();
         assertThat(service.findJdTextByJobId("job-does-not-exist")).isEmpty();
+    }
+
+    // ------------------------------------------------------------------ part3 N2.3：维度权重装配
+
+    @Test
+    void candidate_carries_dimension_weights_that_cover_six_dimensions_and_sum_to_one() {
+        // N2.3 的完成标准：DTO 的权重字段**非空且和为 1**。
+        // 空权重或和 ≠ 1 会让 overall 的分母错 → 综合分整体被放大/缩小，而没人看得出来。
+        List<JobCandidateDto> candidates = orchestrationService().assembleCandidates();
+        assertThat(candidates).isNotEmpty();
+
+        for (JobCandidateDto candidate : candidates) {
+            assertThat(candidate.getWeightLevel())
+                    .as("job=%s 的权重档必须装配上", candidate.getJobId())
+                    .isIn("campus", "mid", "senior");
+
+            Map<String, Double> weights = candidate.getDimensionWeights();
+            assertThat(weights).as("job=%s 的六维权重不能为空", candidate.getJobId())
+                    .isNotNull().isNotEmpty();
+            assertThat(weights.keySet())
+                    .containsExactlyInAnyOrderElementsOf(RubricWeightsProvider.DIMENSIONS);
+            assertThat(weights.values()).allSatisfy(weight ->
+                    assertThat(weight).isBetween(0.0, 1.0));
+            assertThat(weights.values().stream().mapToDouble(Double::doubleValue).sum())
+                    .as("job=%s 的六维权重之和必须是 1.0", candidate.getJobId())
+                    .isCloseTo(1.0, org.assertj.core.data.Offset.offset(1e-9));
+        }
+    }
+
+    @Test
+    void weight_level_follows_job_level_vocabulary() {
+        // 岗位库里的 level 只有两种写法（"校招" / "社招"）；映射错档会让整批岗位用错权重。
+        RubricWeightsProvider provider = new RubricWeightsProvider();
+
+        assertThat(provider.weightLevelFor("校招")).isEqualTo("campus");
+        assertThat(provider.weightLevelFor("社招")).isEqualTo("mid");
+        assertThat(provider.weightLevelFor(null)).isEqualTo(RubricWeightsProvider.DEFAULT_WEIGHT_LEVEL);
+    }
+
+    @Test
+    void rubric_weights_are_loaded_from_the_shared_resource() {
+        // 权重表来自 analyzer 的 rubric.yaml（Maven 并入 classpath）。
+        // 若它没了，说明 pom 的第二个 <resource> 被删了 —— 那会静默退化成「没有权重」。
+        assertThat(new RubricWeightsProvider().loadedLevelCount()).isGreaterThanOrEqualTo(3);
     }
 
     // ------------------------------------------------------------------ D1 分类是数据

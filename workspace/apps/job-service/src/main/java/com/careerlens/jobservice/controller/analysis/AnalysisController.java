@@ -59,6 +59,15 @@ public class AnalysisController {
     static final String FIELD_JOB_ID = "jobId";
     static final String FIELD_JD_TEXT = "jdText";
     static final String FIELD_CANDIDATES = "jobCandidates";
+    /** part3 增量（§2.2）：分析深度。缺省由 analyzer 落回 {@code standard}。 */
+    static final String FIELD_ANALYSIS_DEPTH = "analysisDepth";
+    /** part3 增量（C7）：推荐条数上限。缺省由 analyzer 落回 3。 */
+    static final String FIELD_TOP_N = "topN";
+
+    /** 允许的深度取值（与 {@code AnalysisDepth.enum} 一致）。 */
+    private static final List<String> ALLOWED_DEPTHS = List.of("standard", "deep");
+    /** 与 {@code AnalysisDepth} 契约的 maximum 一致（C7）。 */
+    private static final int MAX_TOP_N = 10;
 
     private final AnalysisOrchestrationService orchestrationService;
     private final AnalyzerStreamClient analyzerStreamClient;
@@ -93,6 +102,8 @@ public class AnalysisController {
             @RequestParam(value = FIELD_RESUME_TEXT, required = false) String resumeText,
             @RequestParam(value = FIELD_JOB_ID, required = false) String jobId,
             @RequestParam(value = FIELD_JD_TEXT, required = false) String jdText,
+            @RequestParam(value = FIELD_ANALYSIS_DEPTH, required = false) String analysisDepth,
+            @RequestParam(value = FIELD_TOP_N, required = false) Integer topN,
             @RequestHeader(value = "X-Trace-Id", required = false) String traceId) throws IOException {
 
         // ---- 第二道校验（spec.md §2.5：建流前能判定的走同步 HTTP）----------------
@@ -110,18 +121,36 @@ public class AnalysisController {
             throw new BusinessException(ErrorCode.INVALID_INPUT, "file 与 resumeText 至少提供一个");
         }
 
+        // part3 的两个新参数同样走「建流前的同步 HTTP」：它们不依赖文件内容，
+        // 没有任何理由推迟到 SSE 里报错 —— 那样前端要先转起进度条再收到 error。
+        if (analysisDepth != null && !ALLOWED_DEPTHS.contains(analysisDepth)) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT,
+                    "analysisDepth 只能是 " + String.join(" / ", ALLOWED_DEPTHS));
+        }
+        if (topN != null && (topN < 1 || topN > MAX_TOP_N)) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT,
+                    "topN 必须在 1.." + MAX_TOP_N + " 之间");
+        }
+
         // ---- 候选集装配（全项目唯一给 Python 数据的地方）------------------------
         List<JobCandidateDto> candidates = orchestrationService.assembleCandidates();
         String candidatesJson = objectMapper.writeValueAsString(candidates);
 
         // 目标岗位的 JD 原文走顶层字段下发（契约 R2），不进候选集
+        //
+        // ⚠️ 查不到就**立刻 404**，不能 `orElse(null)` 静默往下走：
+        // 那样 analyzer 会拿到空 JD，算出一个 `score=0, matched=[], missing=[]`
+        // 的 match —— 和「用户真的一个技能都没命中」在响应里完全一样。
+        // 用户只会看到「匹配度 0」，无从得知是自己把岗位 ID 填错了。
+        // 岗位不存在是建流前就能判定的，按 spec §2.5 应当走同步 HTTP 报错。
         String targetJdText = jdText;
         if (jobId != null && jdText == null) {
-            targetJdText = orchestrationService.findJdTextByJobId(jobId).orElse(null);
+            targetJdText = orchestrationService.findJdTextByJobId(jobId)
+                    .orElseThrow(() -> new BusinessException(ErrorCode.JOB_NOT_FOUND, "岗位不存在：" + jobId));
         }
 
-        log.info("analysis stream accepted (candidates={}, jobId={}, hasFile={}, traceId={})",
-                candidates.size(), jobId, fileBytes != null, traceId);
+        log.info("analysis stream accepted (candidates={}, jobId={}, hasFile={}, depth={}, topN={}, traceId={})",
+                candidates.size(), jobId, fileBytes != null, analysisDepth, topN, traceId);
 
         // ---- 响应头（SSE 三件套，缺一不可）----------------------------------------
         // Content-Type 必须**显式设**：ResponseBodyEmitter 的 send(..., MediaType) 只管
@@ -141,6 +170,8 @@ public class AnalysisController {
         final String jd = targetJdText;
         final String cands = candidatesJson;
         final String trace = traceId == null ? "-" : traceId;
+        final String depth = analysisDepth;
+        final Integer top = topN;
 
         emitter.onCompletion(() -> log.debug("stream completed (traceId={})", trace));
         emitter.onTimeout(() -> log.warn("stream timeout (traceId={})", trace));
@@ -150,7 +181,7 @@ public class AnalysisController {
         streamExecutor.execute(() -> {
             try {
                 int status = analyzerStreamClient.stream(
-                        payload, name, text, jobId, jd, cands,
+                        payload, name, text, jobId, jd, cands, depth, top,
                         line -> {
                             try {
                                 emitter.send(line, MediaType.TEXT_EVENT_STREAM);

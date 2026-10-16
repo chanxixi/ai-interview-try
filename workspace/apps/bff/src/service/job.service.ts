@@ -1,5 +1,6 @@
 import type { JobServiceClient } from '../client/jobService.client';
 import { config } from '../config';
+import type { CapabilitiesResult } from '../dto/response/capabilities.response';
 import type { PingResult } from '../dto/response/ping.response';
 
 /**
@@ -17,6 +18,8 @@ import type { PingResult } from '../dto/response/ping.response';
 export interface JobService {
   /** 聚合本跳信息 + job-service 及其下游的探针结果 */
   ping(traceId: string): Promise<PingResult>;
+  /** 裁剪为前端决策所需的最小能力事实（见 `dto/response/capabilities.response.ts`） */
+  capabilities(traceId: string): Promise<CapabilitiesResult>;
 }
 
 export function createJobService(deps: { jobService: JobServiceClient }): JobService {
@@ -33,6 +36,17 @@ export function createJobService(deps: { jobService: JobServiceClient }): JobSer
         runtime: `node ${process.version}`,
         traceId,
         downstream,
+      };
+    },
+
+    async capabilities(traceId: string): Promise<CapabilitiesResult> {
+      // 裁剪掉 `service` / `error` 等诊断字段：前端只据能力布尔值做决策，
+      // 多暴露的字段迟早会被误用成「业务输入」（spec.md §2.7：Vue 不自行推断规则）
+      const upstream = await deps.jobService.capabilities(traceId);
+
+      return {
+        llmEnabled: upstream.llmEnabled,
+        analyzerReachable: upstream.analyzerReachable,
       };
     },
   };

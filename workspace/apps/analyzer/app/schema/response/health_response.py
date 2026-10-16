@@ -6,7 +6,6 @@
 """
 
 from typing import Literal, Optional
-
 from pydantic import BaseModel
 
 
@@ -25,3 +24,19 @@ class PingResponse(BaseModel):
     version: str
     runtime: str
     traceId: Optional[str] = None
+
+
+class CapabilitiesResponse(BaseModel):
+    """能力探测响应（非契约接口）：本跳**在链路可达之后**还能做什么。
+
+    与 {@link PingResponse} 的分工：`/ping` 回答「通不通」，本模型回答「通了能做什么」。
+
+    `llmEnabled` 是 part3「深度分析」的唯一开关证据（`Settings.llm_enabled` 的对外投影）：
+    前端据此决定要不要放开「深度」选项 —— 它看不到环境变量，不探测就只能猜。
+
+    ⚠️ **只暴露能力布尔值，不暴露 `base_url` / `model` 等配置值**：
+    配置是内部实现，泄露出去等于把「用哪个模型」变成对外承诺。
+    """
+
+    service: str
+    llmEnabled: bool

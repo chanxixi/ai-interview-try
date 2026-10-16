@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
+import { fetchCapabilities } from "../../api/client";
 import type { AnalysisInput } from "../../api/analysis";
+import { toDeepCapability, type CapabilitiesResult } from "../../api/types";
 import ResultPanel from "./components/ResultPanel.vue";
 import StageProgress from "./components/StageProgress.vue";
 import ThinkingConsole from "./components/ThinkingConsole.vue";
@@ -21,6 +23,38 @@ import { useAnalysisStream } from "./composables/useAnalysisStream";
  * 好处是 `useAnalysisStream` 可以脱离组件单测（M8.4 的 web 检查项）。
  */
 const stream = useAnalysisStream();
+
+/**
+ * part3：能力探测结果。`null` = **尚未回来或探测失败**（详情见下方 `deepAvailable`）。
+ *
+ * 为什么在页面层而不是在 `UploadPanel` 里探测：能力是**页面级事实**（还可能被右栏复用），
+ * 组件只管拿到结论后怎么表现。
+ */
+const capabilities = ref<CapabilitiesResult | null>(null);
+
+onMounted(async () => {
+  try {
+    capabilities.value = await fetchCapabilities();
+  } catch {
+    // 探测失败**不阻断**分析页：把它当作「能力未知」而不是「不可用」。
+    // 理由：一次网络抖动不该把功能藏起来 —— 真正不可用时后端仍有规则兜底。
+    capabilities.value = null;
+  }
+});
+
+/**
+ * 「深度」入口三态（`available` / `unknown` / `unavailable`）—— 见 `api/types.ts`。
+ *
+ * | 探测结论 | 能否选「深度」 | 默认选中 |
+ * |---|---|---|
+ * | `available` | ✅ | **`deep`**（有 LLM 就用 LLM） |
+ * | `unknown`（未回来 / 探测失败） | ✅（fail-open） | `standard`（不猜） |
+ * | `unavailable` | ❌ | `standard` |
+ *
+ * ⚠️ **接口缺省仍是 `standard`**（spec §2.2 / AC25）。「默认 deep」只发生在这个组件树里 ——
+ * 是前端把选项**预置**为 deep，不是改服务端缺省；后端 deep 的规则兜底也一字未动（§2.6 / AC29）。
+ */
+const deepCapability = computed(() => toDeepCapability(capabilities.value));
 
 const hasOutput = computed(
   () =>
@@ -50,6 +84,7 @@ onBeforeUnmount(() => {
     <div class="analyzer__grid">
       <UploadPanel
         :busy="stream.isStreaming.value"
+        :deep-capability="deepCapability"
         @analyze="handleAnalyze"
         @cancel="stream.abort()"
       />

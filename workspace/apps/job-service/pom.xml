@@ -72,6 +72,28 @@
   </dependencies>
 
   <build>
+    <!--
+      ⚠️ 声明 <resources> 会**替换** Maven 的默认资源目录，所以第一项必须把
+      src/main/resources 显式写回来（db/、application.yml、logback 都靠它）。
+
+      第二项是 part3 N2.3 的关键：Java 下发的**维度权重**与 analyzer 的
+      `service/ability_profile.py` 读的是**同一份 `rubric.yaml`**（analyzer 侧的维度真源）。
+      把它并入 job-service 的 classpath，而不是在 Java 里抄一份权重表 ——
+      抄一份就等于「两处副本」，改一处忘一处是静默的（DoD 12 明确禁止）。
+    -->
+    <resources>
+      <resource>
+        <directory>src/main/resources</directory>
+        <filtering>false</filtering>
+      </resource>
+      <resource>
+        <directory>${project.basedir}/../analyzer/app/data</directory>
+        <includes>
+          <include>rubric.yaml</include>
+        </includes>
+        <filtering>false</filtering>
+      </resource>
+    </resources>
     <plugins>
       <plugin>
         <groupId>org.springframework.boot</groupId>

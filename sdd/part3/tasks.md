@@ -1,6 +1,6 @@
 # tasks.md — CareerLens part3：任务拆解
 
-> SDD 产物 **3/3** · v0.2 · 依赖 `sdd/part3/{spec,plan}.md` v0.2
+> SDD 产物 **3/3** · v0.3 · 依赖 `sdd/part3/{spec,plan}.md`（spec v0.3 / plan v0.2）
 > 只列 part3 **增量任务**；**提交门禁、DoD、审核清单沿用 `sdd/part1/tasks.md` 与 `sdd/part2/tasks.md`**。
 > 任务前缀 **`N`**（part1 = `T`，part2 = `M`）；时间基准 155 分钟（plan §11），按实际等比缩放。
 
@@ -54,6 +54,7 @@
 | **N6.1** | 降级演练（4 条，逐一留档） | 断 LLM / 非法 JSON / 维度算不出 / `standard` 模式 —— 四条**result 与 done 均照常**（AC29） |
 | **N6.2** | `DELIVERY.md` 增补 | 记录：六维口径 · 权重来源与档位 · 两次 LLM 取舍 · 已知缺口（判定准确率不承诺、`overall` 与全维不可比） |
 | **N6.3** | 提交 `feat(part3): evidence-level verdicts, ability profile & growth directions` | 人工审核 diff 通过后才执行（门禁） |
+| **N6.4** | 入口层「自动决定深度」（C8）：三跳 `GET /capabilities` + 前端开关三态联动 | 探测到 LLM → 「深度」**默认选中**且可切回标准；`unavailable` → 禁用并拨回标准；探测失败（`unknown`）→ 放行但**不预置** deep；`standard` 形状快照不变（AC25 不破） |
 
 ---
 
@@ -79,6 +80,7 @@
 | 可复现 / 可审计 | N0.2, N2.1, N3.3 | AC30 / AC31 |
 | 断 LLM 不塌 | N1.2, N1.3, N6.1 | AC29 |
 | 老前端不受影响 | N4.2, N5.3 | AC25 |
+| 有 LLM 就自动用深度（入口层） | N6.4 | AC36 |
 | 十个岗位 | N0.1 | AC35 |
 
 ## 附录 B · DoD（增补 part2 的 10 条）

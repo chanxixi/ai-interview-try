@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import type { UploadFile, UploadInstance, UploadRawFile } from 'element-plus';
 
-import type { AnalysisInput } from '../../../api/analysis';
+import type { AnalysisDepth, AnalysisInput } from '../../../api/analysis';
+import type { DeepCapability } from '../../../api/types';
 import { MAX_UPLOAD_BYTES, validateResumeFile } from '../../../utils/upload';
 
 /**
@@ -18,10 +19,21 @@ import { MAX_UPLOAD_BYTES, validateResumeFile } from '../../../utils/upload';
  * 只是体验优化：不合规的文件**根本不发请求**（M7.4 的验收点），
  * 权威判据仍在 BFF。两条判据顺序与后端一致，避免「前端过了后端拦」的割裂感。
  */
-const props = defineProps<{
-  /** 流式进行中：禁用整块面板，避免重复提交 */
-  busy: boolean;
-}>();
+const props = withDefaults(
+  defineProps<{
+    /** 流式进行中：禁用整块面板，避免重复提交 */
+    busy: boolean;
+    /**
+     * 后端能力探测的三态结论（`GET /api/capabilities` → `toDeepCapability`）。
+     *
+     * **缺省 `unknown`** = 不限制、**不预置 deep**。刻意的 fail-open：探测失败 / 尚未回来时
+     * 放行但不猜，否则一次网络抖动要么把「深度」藏起来、要么让用户白等两次 LLM 往返。
+     * 真正的最后防线是后端的规则兜底（spec §2.6），不是这里的禁用。
+     */
+    deepCapability?: DeepCapability;
+  }>(),
+  { deepCapability: 'unknown' },
+);
 
 const emit = defineEmits<{
   analyze: [input: AnalysisInput];
@@ -37,6 +49,53 @@ const showTextInput = ref(false);
 const resumeText = ref('');
 /** 目标岗位 ID：不填 → 后端 `match` 为 null，只出推荐（part2 的关键差异） */
 const jobId = ref('');
+
+/**
+ * part3：分析深度。
+ *
+ * **缺省必须是 `standard`** —— 它是「老行为一字不变」的可回退开关（AC25），
+ * 也是整条链最省时的路径（不额外调两次 LLM）。深度分析要用户**主动选**，
+ * 不能默认开启：多两次 LLM 往返是几十秒的差别，不该由系统替用户决定。
+ */
+const analysisDepth = ref<AnalysisDepth>('standard');
+
+/** 用户是否**亲手**改过深度。改过之后，探测结论不得再覆盖他的选择。 */
+const depthTouched = ref(false);
+
+function onDepthChange(): void {
+  depthTouched.value = true;
+}
+
+/**
+ * 能力探测是**异步**的（页面挂载后才回来），所以必须处理「结论晚于用户操作」：
+ *
+ * | 结论 | 行为 |
+ * |---|---|
+ * | `unavailable` | 拨回 `standard` —— 按钮禁用却仍停在 `deep` 是**界面说不通**的状态 |
+ * | `available` 且用户没选过 | 预置 `deep` ——「有 LLM 就用 LLM」 |
+ * | `unknown` | **不动**：探测是优化不是前提，没结论时既不预置 deep，也不把功能藏起来 |
+ *
+ * ⚠️ 这是**前端预置选项**，不是改服务端缺省 —— 接口缺省仍是 `standard`（spec §2.2 / AC25）。
+ */
+watch(
+  () => props.deepCapability,
+  (capability) => {
+    if (capability === 'unavailable') {
+      if (analysisDepth.value === 'deep') analysisDepth.value = 'standard';
+      return;
+    }
+    if (capability === 'available' && !depthTouched.value) {
+      analysisDepth.value = 'deep';
+    }
+  },
+  { immediate: true },
+);
+
+/**
+ * part3：推荐条数上限。`null` = 不传 → 由后端落回 3（AC17 不被破坏）。
+ * 用 `null` 而不是默认填 3，是为了让「缺省」这件事只由后端定义一处。
+ */
+const topN = ref<number | null>(null);
 
 const hasInput = computed(() => pickedFile.value !== null || resumeText.value.trim().length > 0);
 
@@ -83,6 +142,8 @@ function submit(): void {
     file: pickedFile.value,
     resumeText: pickedFile.value ? undefined : resumeText.value.trim() || undefined,
     jobId: jobId.value.trim() || undefined,
+    analysisDepth: analysisDepth.value,
+    topN: typeof topN.value === 'number' ? topN.value : undefined,
   });
 }
 </script>
@@ -143,14 +204,51 @@ function submit(): void {
 
     <h2 class="panel__title panel__title--gap">② 目标岗位（可选）</h2>
     <p class="panel__note">
-      不填 → 只给「Top-3 推荐」；填了 → 额外产出与它的精确匹配分与双向证据。
+      不填 → 只给「Top-3 推荐」；填了 → 额外产出与它的精确匹配分与双向证据。<br />
+      可用岗位：<code>job-backend-01</code> · <code>job-frontend-01</code> ·
+      <code>job-algorithm-01</code> · <code>job-devops-01</code> ·
+      <code>job-fullstack-01</code> · <code>job-operation-01</code> · <code>job-qa-01</code>
     </p>
     <el-input
       v-model="jobId"
-      placeholder="岗位 ID，例如 job-java-01"
+      placeholder="岗位 ID，例如 job-backend-01"
       clearable
       :disabled="props.busy"
     />
+
+    <h2 class="panel__title panel__title--gap">③ 分析深度（可选）</h2>
+    <p class="panel__note">
+      标准 = part2 的老行为（匹配 + 推荐）；深度会额外产出**逐条判定、优化点、提升方向与六维能力画像**
+      —— 代价是多两次 LLM 往返，耗时会明显变长。
+    </p>
+    <el-radio-group v-model="analysisDepth" :disabled="props.busy" @change="onDepthChange">
+      <el-radio-button value="standard">标准</el-radio-button>
+      <el-radio-button value="deep" :disabled="props.deepCapability === 'unavailable'"
+        >深度</el-radio-button
+      >
+    </el-radio-group>
+    <p
+      v-if="props.deepCapability === 'available' && analysisDepth === 'deep' && !depthTouched"
+      class="panel__note"
+    >
+      检测到可用的 LLM，已默认选中「深度」（多两次 LLM 往返，耗时更长）。嫌慢可切回「标准」。
+    </p>
+    <p v-if="props.deepCapability === 'unavailable'" class="panel__note panel__note--warn">
+      当前未检测到可用的 LLM（或分析服务不可达），已自动切到标准分析并禁用「深度」。
+      深度分析需要 LLM；未配置时后端虽仍会用规则兜底出结果，但那是降级路径，不该由「深度」入口进入。
+    </p>
+
+    <div class="depth-row">
+      <span class="depth-row__label">推荐条数上限</span>
+      <el-input-number
+        v-model="topN"
+        :min="1"
+        :max="10"
+        :disabled="props.busy"
+        controls-position="right"
+      />
+      <span class="depth-row__hint">留空 = 默认 3 个</span>
+    </div>
 
     <div class="submit-row">
       <el-button

@@ -26,22 +26,25 @@ Pydantic 模型描述不了「文件部分」，所以逐字段声明。
 """
 
 from __future__ import annotations
-
 import json
 import logging
 from typing import Annotated, Optional
-
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
-
-from app.core.constants import RESUME_MAX_LENGTH, TRACE_ID_HEADER
-from app.core.dependencies import get_dictionary, get_llm_client
-from app.llm.client import LlmClient
-from app.service.analysis_stream_service import StreamRequest, stream_analysis
-from app.service.matcher import Requirement
-from app.service.normalizer import SkillDictionary
-from app.service.recommender import JobCandidate
-from app.util.response import error_body
+from app.core.constants import (
+    ANALYSIS_DEPTHS,
+    DEFAULT_ANALYSIS_DEPTH,
+    MAX_TOP_N,
+    RESUME_MAX_LENGTH,
+    TRACE_ID_HEADER,
+)
+from app.core.wiring.dependencies import get_dictionary, get_llm_client
+from app.llm.events import LlmClient
+from app.service.orchestration.stream import StreamRequest, stream_analysis
+from app.service.match.matcher import Requirement
+from app.service.skill.normalizer import SkillDictionary
+from app.service.match.recommender import JobCandidate
+from app.util.http.response import error_body
 
 logger = logging.getLogger(__name__)
 
@@ -107,9 +110,35 @@ def _parse_candidates(raw: Optional[str]) -> tuple[JobCandidate, ...]:
                 level=item.get("level"),
                 category=item.get("category"),
                 requirements=tuple(requirements),
+                weight_level=_optional_str(item.get("weightLevel")),
+                dimension_weights=_parse_weights(item.get("dimensionWeights")),
             )
         )
     return tuple(candidates)
+
+
+def _optional_str(value) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _parse_weights(raw) -> dict[str, float] | None:
+    """解析 Java 装配的六维权重（part3 N2.3）。
+
+    **解析失败返回 `None` 而不是 `{}`**：`None` 的语义是「上游没给」，
+    下游会回退 `rubric.yaml`；`{}` 会被当成「给了一张空表」，
+    与「没给」在 `ability_profile._usable_weights` 里虽然同样被拒，
+    但日志上分不清是「漏传」还是「传错」—— 而这两种故障的排查方向完全不同。
+    """
+    if not isinstance(raw, dict) or not raw:
+        return None
+    try:
+        return {str(key): float(value) for key, value in raw.items()}
+    except (TypeError, ValueError):
+        logger.warning("dimensionWeights is not a numeric map, ignoring")
+        return None
 
 
 @router.post("/analyze/stream")
@@ -119,13 +148,20 @@ async def analyze_stream(
     jobId: Annotated[Optional[str], Form()] = None,
     jdText: Annotated[Optional[str], Form()] = None,
     jobCandidates: Annotated[Optional[str], Form()] = None,
+    analysisDepth: Annotated[Optional[str], Form()] = None,
+    topN: Annotated[Optional[int], Form()] = None,
     x_trace_id: Annotated[Optional[str], Header(alias=TRACE_ID_HEADER)] = None,
     dictionary: DictionaryDep = None,  # type: ignore[assignment]
     llm: LlmDep = None,  # type: ignore[assignment]
 ) -> StreamingResponse:
-    """流式分析（part2 spec §2.2 / §2.4）。
+    """流式分析（part2 spec §2.2 / §2.4 + part3 §2.2）。
 
-    事件序列：`meta → stage×7 → [thinking…] → result → done`。
+    事件序列：
+
+    - `standard`（缺省）：`meta → stage×7 → [thinking…] → result → done`
+    - `deep`：`meta → stage×8（多一个 reviewed）→ [thinking…] → result → done`
+
+    两个新参数**都可缺省**，缺省即 part2 行为（AC25）—— 这是本 part 的可回退保证。
     """
     file_bytes: bytes | None = None
     file_name: Optional[str] = None
@@ -143,6 +179,22 @@ async def analyze_stream(
             detail=error_body("INVALID_INPUT", "file 与 resumeText 至少提供一个"),
         )
 
+    # 两个新参数的校验也走**建流前的同步 HTTP**（spec §2.5 的分界线）：
+    # 它们在读文件之前就能判定，没有任何理由把它们推迟到 SSE 里去报错 ——
+    # 那样前端得先看到一条流建起来、进度条转起来，再收到一个 error 事件。
+    if analysisDepth is not None and analysisDepth not in ANALYSIS_DEPTHS:
+        raise HTTPException(
+            status_code=400,
+            detail=error_body(
+                "INVALID_INPUT", f"analysisDepth 只能是 {' / '.join(ANALYSIS_DEPTHS)}"
+            ),
+        )
+    if topN is not None and not (1 <= topN <= MAX_TOP_N):
+        raise HTTPException(
+            status_code=400,
+            detail=error_body("INVALID_INPUT", f"topN 必须在 1..{MAX_TOP_N} 之间"),
+        )
+
     stream_request = StreamRequest(
         file_bytes=file_bytes,
         file_name=file_name,
@@ -151,6 +203,8 @@ async def analyze_stream(
         jd_text=jdText,
         job_candidates=_parse_candidates(jobCandidates),
         trace_id=x_trace_id,
+        analysis_depth=analysisDepth or DEFAULT_ANALYSIS_DEPTH,
+        top_n=topN,
     )
 
     async def frames():

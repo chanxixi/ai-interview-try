@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { STAGE_ORDER, type AnalyzeResult } from '../../src/api/analysis';
+import { STAGE_ORDER, STANDARD_STAGE_ORDER, type AnalyzeResult } from '../../src/api/analysis';
 import { useAnalysisStream } from '../../src/pages/analyzer/composables/useAnalysisStream';
 
 /**
@@ -94,7 +94,7 @@ describe('useAnalysisStream', () => {
 
     expect(stream.isStreaming.value).toBe(false);
     expect(stream.meta.value).toEqual({ traceId: 't-1', source: 'pdf' });
-    expect(stream.stages.value.map((s) => s.stage)).toEqual([...STAGE_ORDER]);
+    expect(stream.stages.value.map((s) => s.stage)).toEqual([...STANDARD_STAGE_ORDER]);
     expect(stream.stages.value.every((s) => s.status === 'ok')).toBe(true);
     expect(stream.thinking.value).toBe('这份简历缺少量化。');
     expect(stream.result.value?.recommendations[0].jobId).toBe('job-java-01');
@@ -228,5 +228,81 @@ describe('useAnalysisStream', () => {
     expect(form.get('file')).toBeInstanceOf(File);
     expect(form.get('resumeText')).toBeNull();
     expect((init.headers as Record<string, string>).Accept).toBe('text/event-stream');
+  });
+
+  // ------------------------------------------------------------------ part3（N4）
+
+  it('part3：缺省不发送 analysisDepth / topN —— 默认值只由后端定义一处', async () => {
+    const fetchMock = vi.fn(async () => streamResponse(happyPathFrames()));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const stream = useAnalysisStream();
+    await stream.start({ resumeText: '简历' });
+
+    const form = (fetchMock.mock.calls[0][1] as RequestInit).body as FormData;
+    expect(form.get('analysisDepth')).toBeNull();
+    expect(form.get('topN')).toBeNull();
+    // 进度条按 standard 建：7 格，没有 reviewed
+    expect(stream.stages.value.map((s) => s.stage)).toEqual([...STANDARD_STAGE_ORDER]);
+    expect(stream.analysisDepth.value).toBe('standard');
+  });
+
+  it('part3 deep：带上 analysisDepth 与 topN，且进度条是 8 格（含 reviewed）', async () => {
+    const fetchMock = vi.fn(async () => streamResponse(happyPathFrames()));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const stream = useAnalysisStream();
+    await stream.start({ resumeText: '简历', analysisDepth: 'deep', topN: 5 });
+
+    const form = (fetchMock.mock.calls[0][1] as RequestInit).body as FormData;
+    expect(form.get('analysisDepth')).toBe('deep');
+    expect(form.get('topN')).toBe('5');
+
+    // ★ 进度条必须在**请求发出的那一刻**就是 8 格，而不是等后端发 reviewed 才补一格
+    expect(stream.stages.value.map((s) => s.stage)).toEqual([...STAGE_ORDER]);
+    expect(stream.analysisDepth.value).toBe('deep');
+  });
+
+  it('part3：显式选 standard 时也不发送该字段（避免两处默认值漂移）', async () => {
+    const fetchMock = vi.fn(async () => streamResponse(happyPathFrames()));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const stream = useAnalysisStream();
+    await stream.start({ resumeText: '简历', analysisDepth: 'standard' });
+
+    const form = (fetchMock.mock.calls[0][1] as RequestInit).body as FormData;
+    expect(form.get('analysisDepth')).toBeNull();
+  });
+
+  it('part3 deep：result 里的四个新块被原样落库', async () => {
+    const deepResult = {
+      ...RESULT,
+      verdicts: [
+        { skill: 'Kafka', importance: 'required', verdict: 'missing', reason: '无证据' },
+      ],
+      improvements: [
+        { area: '缺失能力', action: '补实践', evidence: '负责订单系统重构', targets: ['Kafka'] },
+      ],
+      growthDirections: [
+        { direction: '消息队列', why: '零证据', firstStep: '用一次', priority: 1 },
+      ],
+      abilityProfile: {
+        dimensions: [{ name: '技术深度', score: 65, rubricRef: 'tech_depth.L2', evidence: 'x' }],
+        overall: 65,
+      },
+      meta: { ...RESULT.meta, analysisDepth: 'deep', verdictCount: 1, directionCount: 1 },
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => streamResponse([frame('result', deepResult), frame('done', { elapsedMs: 9 })])),
+    );
+
+    const stream = useAnalysisStream();
+    await stream.start({ resumeText: '简历', analysisDepth: 'deep' });
+
+    expect(stream.result.value?.verdicts?.[0].skill).toBe('Kafka');
+    expect(stream.result.value?.growthDirections?.[0].priority).toBe(1);
+    expect(stream.result.value?.abilityProfile?.overall).toBe(65);
+    expect(stream.error.value).toBeNull();
   });
 });

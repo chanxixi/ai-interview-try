@@ -25,6 +25,12 @@ import { AppError } from '../errors/appError';
 /** 与 Java / Python 同一口径：10 MB（spec.md §2.5）。 */
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
+/** part3 §2.2：允许的分析深度。**缺省 `standard`**（AC25 的可回退开关）。 */
+export const ALLOWED_ANALYSIS_DEPTHS = ['standard', 'deep'] as const;
+
+/** part3 C7：推荐条数上限（缺省仍是 3，由 analyzer 侧决定）。 */
+export const MAX_TOP_N = 10;
+
 /** PDF 文件头的 magic number。 */
 const PDF_MAGIC = Buffer.from('%PDF-', 'ascii');
 
@@ -101,6 +107,11 @@ export function extractUpload(ctx: Context): UploadPayload {
     }
   }
 
+  // ⚠️ 两个 part3 参数也要在**读文件之前**校验（spec.md §2.5 的分界线）：
+  // controller 会先 `ctx.status = 200` 并 `flushHeaders()`，一旦头发出去，
+  // 再抛 AppError 也改不了状态码 —— 前端只会看到「200 + 空流」，完全不知道参数是错的。
+  validateAnalysisParams(fields);
+
   const raw = request.file ?? pickFirstFile(request.files);
   if (!raw || typeof raw !== 'object') {
     ensureHasInput(null, fields);
@@ -110,6 +121,29 @@ export function extractUpload(ctx: Context): UploadPayload {
   const file = normalizeFile(raw as Record<string, unknown>);
   validateFile(file);
   return { file, fields };
+}
+
+/**
+ * part3 两个新参数的校验 —— **BFF 是第一道**（Java 侧还有第二道，与文件大小同一个套路）。
+ *
+ * 三条判据都不依赖文件内容，所以必须在建流前判（见上）。
+ * 缺省（字段不存在）**一律放行**：默认值由 analyzer 决定，
+ * 这里再写一遍 `'standard'` / `3` 就成了两处默认值，迟早漂移。
+ */
+export function validateAnalysisParams(fields: Record<string, string>): void {
+  const depth = fields.analysisDepth;
+  if (depth !== undefined && depth !== '' && !ALLOWED_ANALYSIS_DEPTHS.includes(depth as never)) {
+    throw AppError.invalidInput(`analysisDepth 只能是 ${ALLOWED_ANALYSIS_DEPTHS.join(' / ')}`);
+  }
+
+  const rawTopN = fields.topN;
+  if (rawTopN !== undefined && rawTopN !== '') {
+    // 用 `Number` 而不是 `parseInt`：`parseInt('3abc')` 会给 3，把这个错值悄悄放过去。
+    const topN = Number(rawTopN);
+    if (!Number.isInteger(topN) || topN < 1 || topN > MAX_TOP_N) {
+      throw AppError.invalidInput(`topN 必须是 1..${MAX_TOP_N} 之间的整数`);
+    }
+  }
 }
 
 /**

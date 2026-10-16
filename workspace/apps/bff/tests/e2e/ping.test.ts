@@ -23,6 +23,7 @@ const HEALTHY_CHAIN: PingResult = {
 
 const healthyJobService: JobServiceClient = {
   ping: async (traceId) => ({ ...HEALTHY_CHAIN, traceId }),
+  capabilities: async () => ({ service: 'job-service', analyzerReachable: true, llmEnabled: true }),
 };
 
 function appWith(jobService: JobServiceClient) {
@@ -64,6 +65,9 @@ describe('e2e · GET /api/ping —— 全链连通性探针', () => {
       ping: async () => {
         throw AppError.upstreamTimeout('job-service');
       },
+      capabilities: async () => {
+        throw AppError.upstreamTimeout('job-service');
+      },
     };
 
     const response = await request(appWith(timingOut)).get('/api/ping');
@@ -78,6 +82,9 @@ describe('e2e · GET /api/ping —— 全链连通性探针', () => {
       ping: async () => {
         throw AppError.serviceUnavailable('job-service');
       },
+      capabilities: async () => {
+        throw AppError.serviceUnavailable('job-service');
+      },
     };
 
     const response = await request(appWith(broken)).get('/api/ping');
@@ -90,6 +97,9 @@ describe('e2e · GET /api/ping —— 全链连通性探针', () => {
   it('下游异常为未知错误时收口为 500 INTERNAL_ERROR', async () => {
     const exploding: JobServiceClient = {
       ping: async () => {
+        throw new Error('boom: internal stack detail');
+      },
+      capabilities: async () => {
         throw new Error('boom: internal stack detail');
       },
     };

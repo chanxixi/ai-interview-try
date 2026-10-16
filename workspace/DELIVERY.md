@@ -141,10 +141,10 @@ CREATE TABLE job_revision (
 
 | 文件 | 角色 | 关键约束 |
 |---|---|---|
-| `apps/analyzer/app/service/parser_plugin.py` | 解析器**插件框架**：`ParseResult` / `DocumentParser` 协议 / `ParserRegistry` / 组合根 `default_registry()` | 只定协议，不含任何格式的解析逻辑 |
-| `apps/analyzer/app/service/pdf_parser.py` | PDF 字节 → `ParseResult` | **唯一** `import pypdf` 的文件（有测试守着） |
-| `apps/analyzer/app/service/docx_parser.py` | Word 字节 → `ParseResult`，**自研**（只用标准库 `zipfile` + `xml.etree`） | 本期不在上传链路上（见 D-2） |
-| `apps/analyzer/app/service/cleaner.py` | 原始文本 → 干净文本 + 章节 | **唯一**改文本的地方；不读文件、不抛业务错误码 |
+| `apps/analyzer/app/service/document/parser_plugin.py` | 解析器**插件框架**：`ParseResult` / `DocumentParser` 协议 / `ParserRegistry` / 组合根 `default_registry()` | 只定协议，不含任何格式的解析逻辑 |
+| `apps/analyzer/app/service/document/pdf_parser.py` | PDF 字节 → `ParseResult` | **唯一** `import pypdf` 的文件（有测试守着） |
+| `apps/analyzer/app/service/document/docx_parser.py` | Word 字节 → `ParseResult`，**自研**（只用标准库 `zipfile` + `xml.etree`） | 本期不在上传链路上（见 D-2） |
+| `apps/analyzer/app/service/document/cleaner.py` | 原始文本 → 干净文本 + 章节 | **唯一**改文本的地方；不读文件、不抛业务错误码 |
 | `apps/analyzer/app/core/constants.py` | `PDF_MAX_PAGES` / `PDF_MIN_TEXT_LAYER_CHARS` / `READING_ORDER_*` | 改这里等于改契约 |
 | `apps/analyzer/tests/unit/` + `tests/integration/` | 111 + 25 条用例 | 全绿（`pytest`，5.8s） |
 
@@ -233,7 +233,7 @@ find workspace/apps -type f \( -iname '*.pdf' -o -iname '*.docx' \) -not -path '
 
 # 门禁②：只有 pdf_parser.py 能 import pypdf（plan §7 的「唯一职责文件」）
 grep -rn -E '^\s*(import|from)\s+pypdf' workspace/apps/analyzer/app/
-# → 只应出现 app/service/pdf_parser.py 两行
+# → 只应出现 app/service/document/pdf_parser.py 两行
 ```
 
 门禁①与②都**已写成测试**（`tests/integration/test_real_resume_samples.py`），不靠人记。
@@ -277,9 +277,9 @@ grep -rn -E '^\s*(import|from)\s+pypdf' workspace/apps/analyzer/app/
 
 | 文件 | 角色 | 不做什么 |
 |---|---|---|
-| `service/normalizer.py` | 词典 + 四步归一化 + 全文技能抽取 | 不算分、不排序 |
-| `service/matcher.py` | **全项目唯一**的打分实现（`score_of`） | 不排序、不选 Top-N |
-| `service/recommender.py` | 全量候选打分 → 排序 → 取 Top-N | **不自己算分**（只调 matcher） |
+| `service/skill/normalizer.py` | 词典 + 四步归一化 + 全文技能抽取 | 不算分、不排序 |
+| `service/match/matcher.py` | **全项目唯一**的打分实现（`score_of`） | 不排序、不选 Top-N |
+| `service/match/recommender.py` | 全量候选打分 → 排序 → 取 Top-N | **不自己算分**（只调 matcher） |
 
 > 「推荐自己再算一套分数」是最容易出的错：`match.score = 82` 而推荐里同一个岗位是 80，
 > 两个数字都「看起来对」，但没人能解释差在哪。**一份公式只允许有一个实现。**
@@ -493,7 +493,7 @@ parser.end();                                   // 流结束，处理残留
 `TextDecoder('utf-8')` 必须用 `{ stream: true }` —— 中文的一个字符可能跨两个 chunk，
 不设这个选项会在边界处解出 `\ufffd`。
 
-服务端（`util/sse.py`）、前端（`utils/sse.ts`）、测试三处**共用同一套分帧规则**，
+服务端（`util/http/sse.py`）、前端（`utils/sse.ts`）、测试三处**共用同一套分帧规则**，
 所以「服务端发出来的字节前端能不能解析」这件事在单测里就能验掉。
 
 ### 5.3 状态机（`composables/useAnalysisStream.ts`）
@@ -599,4 +599,152 @@ M2 把「要不要因此报错」明确留给了 M4 的编排层（`pdf_parser.p
 | D-9 | **part1 spec §2.9（冻结）**：存储降级三档 `mysql → local → mock`，由 `app.storage.mode`（默认 `auto`）在**启动时逐个探测**，第一个成功即停；**§2.8**：`/healthz` 必须返回 `{status, storage}` 作为「降级的唯一可观测证据」<br>**part2 tasks M5.3**：`repository/impl/` 双实现（JPA + InMemory）+ `@ConditionalOnProperty` | **两档、部署期切换**：默认 H2（`jdbc:h2:mem:…`），`JOB_DB_URL` 指向 MySQL 即切主路径。**同一套 Repository**，不做双实现。**`/healthz` 不返回 `storage`**，`mock` 档未实现 | 三档自动探测在 3h 预算下是**主线风险**：探测逻辑本身要写、要测、还要为「MySQL 半死不活」（能连上但查不动）定超时。而两档 URL 切换**已经满足最高原则**（任何时刻仓库都可运行 —— 默认零外部依赖），且「换存储不换分数」天然成立（两档共用同一份 `schema.sql` + `seed.sql`）。<br>**代价**：① part1 的 AC9/AC10 **未满足**；② 降级从「运行期自动」降级为「部署期显式」—— MySQL 挂了**不会**自动下沉，而是启动失败；③ 没有对外可观测的降级证据。<br>**已写成演练**：`drill-degradation.sh` 第 4 条把它标成 **GAP 而非 FAIL**（缺口与真回归必须分开统计）。<br>**要补回去**：新增 `StorageModeResolver`（读 `spring.datasource.url` → `mysql` \| `local`）+ `HealthResponse` 加一个 `storage` 字段（**最小实现**，就能让 §2.8 成立）；再做 `app.storage.mode=auto` 的启动探测与 InMemory 实现（工作量大头在这）。**注意**：`storage` 的枚举按 spec 是 `mysql \| local \| mock` —— H2 档应报 `local`（spec §2.9 的表里 `local` 就是「H2（内存或文件，`MODE=MySQL`）」），不要自造 `h2` 这种新词。 |
 | D-10 | **惯例**：CI 用 `npm ci`（严格按 lock，保证可复现） | ⏳ **已完成一半**：`apps/web/package-lock.json` 已补成**完整** lock 并提交；`ci.yml` 那一步仍写着 `npm install`，换回 `npm ci` 需**有 `workflows` 权限**的提交者应用（见下） | 原问题：`apps/web/package-lock.json` 曾是**残缺的最小骨架**：生成它的那次 `npm install` 被沙箱的**安全删除守卫 fail-closed** 拦下（中文路径下 `genie-trash` 报 `relative path rejected`，PowerShell 回退也失败），整个路径被永久锁为不可写；`writeFile` / `rename` / `cp` / `git checkout` 全部 EPERM。`npm ci` 会因为 lock 与 `package.json` 不一致而**直接失败**。<br>**已按当初写下的「要改回去」执行了一半**：在普通终端 `cd workspace/apps/web && npm install` 生成完整 lock（199 条 `node_modules/*` 记录）并提交 —— 这一步做完，`npm ci` 已经**能跑通**（本地实测 140 packages / type-check / 19 tests / build 全绿）。<br>**剩余一步（1 行，任何人都能做）**：把 `.github/workflows/ci.yml` 里 web 步骤的 `npm install --no-audit --no-fund` 改成 `npm ci`，并可顺手给该 job 的 setup-node 补上 `cache: npm` + `cache-dependency-path: workspace/apps/web/package-lock.json`（与 bff 一致）。<br>**为什么没一起改**：本次提交用的 GitHub App **没有 `workflows` 权限**，推任何触碰 `.github/workflows/` 的 commit 都会被拒（`refusing to allow a GitHub App to create or update workflow`）—— 这是权限约束，不是设计取舍。 |
 | D-11 | **Vite 惯例**：`cacheDir` 默认 `node_modules/.vite` | `apps/web/vitest.config.ts` 把 `cacheDir` 指到 `workspace/.logs/vitest-cache` | 同一个删除守卫把 `node_modules/.vite/` 锁死 → vitest 写 `results.json` 时 `EPERM`，**报错点在测试之前**，看起来像配置坏了。挪到 `.logs/`（已 gitignore）之后恢复正常（19 passed）。<br>**这不是纯环境 workaround**：缓存是可再生的**构建中间物**，写进 `node_modules/` 会让「依赖目录」和「临时文件」混在一起，任何把 `node_modules` 设为只读的环境（容器层、CI 缓存挂载）都会连带让测试跑不起来。与 pytest 的 `-p no:cacheprovider` 同一个思路。**要改回去**：删 `vitest.config.ts` 里的 `cacheDir` 一行。 |
-| D-12 | **指南 §4.1** 的目标态里列了 `analyzer/app/core/resources.py`（`skills.yaml` 加载，`lru_cache`） | 实际**没建**：`skills.yaml` 的路径拼接与读取写在 `service/normalizer.py`（`DICTIONARY_PATH` + `yaml.safe_load`） | 单个资源文件放哪都能跑，所以一直没暴露问题。但 part3 要加**第二个**资源文件 `rubric.yaml` —— 照原习惯就会出现**第二份**路径拼接 + 第二份 YAML 读取 + 第二份顶层校验，三者各自漂移（改一处漏一处会**静默**失效：空词典 → 技能全 `unknown` → 匹配度全 0）。<br>**已清掉**：新增 `core/resources.py`（`DATA_DIR` / `resource_path` / `read_yaml`），`normalizer` 改为消费它；**路径拼接全项目只剩一处**。<br>**一处刻意的边界**：指南 §4.2 规定 `core` 不得 import `service`，因此「读成 dict」在 `resources.py`、「解释成领域对象」（`SkillDictionary` 的别名歧义 / `category` 闭集）仍在 `service/normalizer.py`。同一条约束也决定了 `get_dictionary()` **不能**搬进 core —— 它返回的是 service 层的领域对象。<br>**验证**：改后 `pytest` 仍 **232 passed / 10 skipped**（与改前逐条一致）。 |
+| D-12 | **指南 §4.1** 的目标态里列了 `analyzer/app/core/resources.py`（`skills.yaml` 加载，`lru_cache`） | 实际**没建**：`skills.yaml` 的路径拼接与读取写在 `service/skill/normalizer.py`（`DICTIONARY_PATH` + `yaml.safe_load`） | 单个资源文件放哪都能跑，所以一直没暴露问题。但 part3 要加**第二个**资源文件 `rubric.yaml` —— 照原习惯就会出现**第二份**路径拼接 + 第二份 YAML 读取 + 第二份顶层校验，三者各自漂移（改一处漏一处会**静默**失效：空词典 → 技能全 `unknown` → 匹配度全 0）。<br>**已清掉**：新增 `core/resources.py`（`DATA_DIR` / `resource_path` / `read_yaml`），`normalizer` 改为消费它；**路径拼接全项目只剩一处**。<br>**一处刻意的边界**：指南 §4.2 规定 `core` 不得 import `service`，因此「读成 dict」在 `resources.py`、「解释成领域对象」（`SkillDictionary` 的别名歧义 / `category` 闭集）仍在 `service/skill/normalizer.py`。同一条约束也决定了 `get_dictionary()` **不能**搬进 core —— 它返回的是 service 层的领域对象。<br>**验证**：改后 `pytest` 仍 **232 passed / 10 skipped**（与改前逐条一致）。 |
+| D-13 | **part3 spec §2.3 散文**：每个分数（**含 `overall`**）都必须同时挂 `rubricRef` 与 `evidence`，「无出处的分数不允许出现」（AC27）<br>**同一份 spec 的契约**（N0 冻结）：`AbilityProfile` 是 `additionalProperties: false`，只有 `dimensions` + `overall` 两个属性 | **不改契约**。`overall` 的出处 = **它的 components**：`dimensions[]` 每一项都带 `rubricRef` + 原文 `evidence`，权重来自 `rubric.yaml`（有测试锁「六维齐 + 每档和 = 1」），而加权求和的**唯一实现**在 `service/profile/ability_profile.py`（`overall_of`）。三者合起来就能把 `overall` 完整复核一遍 | spec 在这里**自相矛盾**：散文要求挂字段，而它自己冻结的契约闭掉了对象。两条都不违反的做法是「把出处放在 components 上」——`overall` 是六维的**加权和**，它的出处本来就是那六个分与那张权重表，不是一个能独立给出的字符串（硬给它一个 `evidence` 反而更像编的）。<br>**为什么不动契约**：契约是 N0 已提交的冻结物，加属性虽然也是「纯增量」，但 spec §2.1 的《变更记录》只登记了 C5–C7；开工后偷偷加 C8 会让「冻结顺序」失去意义。<br>**要落字段**（如果一定要）：走 C8 —— spec §2.1 表 + §7 变更记录 + 三份 `contracts/*.yaml` 的 `AbilityProfile` 各加两个可选属性 + `analyze_response.py` 的 `AbilityProfile` 加字段 + `_profile_to_contract` 填值。**代价**：`additionalProperties:false` 一破，「键可以不存在」这类结构保证就要靠测试守了。 |
+| D-14 | **part3 spec §2.3 / §2.6**：`deep` 降级时「前三个块为**空数组**、`abilityProfile` 为 **null**」<br>**ADR-206 / tasks N1.2 / N3.2 / AC29**：降级 = 判定**退化为集合级事实**、方向走规则模板 —— 即**非空** | 取**后者**：`verdicts` 条数 = `match` 条数、每条 `reason` 非空；`improvements` / `growthDirections` 由规则模板产出；`abilityProfile` 由 `advisor_rules` 六维判档（其中 `项目影响力` / `成长性` 两维纯代码算） | 同一份 spec 内两处冲突。**AC29 的原文是「判定退化为集合级事实」**——「退化」不是「清空」；ADR-206 更是把「断 LLM 也要有可解释的结论」写成了决策标题；tasks 把它落成了可当堂验证的事实（「条数 = match 条数」）。三票对一票，且**空数组是更差的产品**：用户断网时会看到一整片空白，分不清「没有缺口」和「AI 挂了」。<br>**代价**：`meta.degraded=true` 是**唯一**能区分「LLM 判定」与「规则判定」的信号 —— 所以前端必须显式标注（已做，见 §8.9）。<br>**要改回空数组**：把 `analysis_stream_service` 里 reviewed 阶段的三处兜底赋值改为空、`ability_profile` 不再调用；**不建议**。 |
+| D-15 | **part3 plan §5** 的目录增量只列了 `service/profile/ability_profile.py` 与 `service/profile/advisor_rules.py` 两个新 Python 文件 | 实际多两个：`service/profile/rubric.py`（rubric 的读取与解释）与 `util/rounding.py`（四舍五入口径） | **`rubric.py`**：`rubric.yaml` 被 `advisor_rules`（兜底判档要 `signals`）与 `ability_profile`（要档位分与权重）**同时**消费。放进任一个都会造成反向依赖（`ability_profile` import `advisor_rules`，或反过来）—— 拆成独立的第三方是唯一不产生循环的方向。它同时承担「宽容加载」策略（缺文件 → `WARN` + `abilityProfile=null`，见 plan §6.2）。<br>**`util/rounding.py`**：spec §2.3 明写「`overall` 的取整口径与 `matcher.score_of` 一致」。**靠注释约定**迟早漂移（`.5` 上的差异只在恰好落在半点时暴露，平时怎么测都对），所以把口径抽成一个函数让两处**共用** —— `matcher.score_of` 也已改为调用它。 |
+| D-16 | **part3 tasks.md** 没有单列「`analysisDepth` / `topN` 在 analyzer 端点 · BFF · Java 三处透传」这条任务（N0.1 只冻结了**契约形状**） | 补上三层透传：analyzer 端点（`Form` 参数 + 建流前 400 校验）· BFF（`upload.middleware.validateAnalysisParams`）· Java（`AnalysisController` 第二道校验 + `AnalyzerStreamClient` form 字段） | 契约冻结了形状不等于链路能跑：不补透传，「`curl -F analysisDepth=deep` 打到 BFF」会因为字段在某一跳被吃掉而永远拿到 `standard` —— 而**契约校验不会发现**（形状是对的，只是没人读）。这是 N4 的必要条件，记在这里以免被当成「顺手多写的」。<br>**一条刻意的克制**：**缺省时三层都不发这些字段**，默认值只由 analyzer 一处定义（`DEFAULT_ANALYSIS_DEPTH` / `DEFAULT_TOP_N`）。三处各写一遍 `'standard'` / `3` 就是三处默认值，改一处必漂。 |
+| D-17 | **part3 plan §5**：`schema/response/analyze_response.py` —— 「+4 块模型（增量，不动已有字段）」 | 4 个块模型确实加在一个文件里，但**另开了两个派生模型**：`DeepMeta(Meta)` 与 `DeepAnalysisResult(AnalyzeResponse)`；`AnalyzeResponse` 与 `Meta` **一行未改** | 这不是风格问题，是 **AC25 的结构性保证**。若把 4 个块做成 `AnalyzeResponse` 上的 `Optional` 字段，`model_dump()` 会输出 `"verdicts": null` —— **键还是出现了**，AC25 的「逐字节一致」立刻不成立；同步端点 `/internal/analyze` 的响应形状也会跟着变（`test_contract_shape.py` 会红）。<br>**踩过一次的坑**：`DeepAnalysisResult` 里必须**显式重声明** `meta: DeepMeta`，否则 pydantic 按基类的 schema 序列化，3 个 part3 键**静默消失**（单测只断言「字段存在」抓不到，是跑 deep 用例才发现的）。 |
+| D-18 | **part3 tasks.md N6.1**：降级演练「四条，逐一留档」（未指定载体） | 新增 `scripts/drill_part3.py` + `drill-part3.sh`（**进程内打桩，零依赖 → 能进 CI**），与 part2 的 `drill-degradation.sh`（**真实 HTTP，要四层全开 → 只能人工跑**）分工：前者守**降级分支覆盖**，后者守**跨进程协议行为** | 四条里有三条（非法 JSON / 维度算不出 / rubric 缺失）**在真实服务上造不出来** —— 服务不会主动返回坏 JSON，rubric 也不会自己消失。硬要 E2E 就得先写一个「会返回坏 JSON 的假 LLM 服务」，那不如直接在进程内起（本脚本正是这么做的：真起一个 `http.server`，让 `OpenAiCompatibleClient` 真的发 HTTP、真的走三层降级）。<br>**收益**：它进了 CI（analyzer job），**第一次跑就抓到一个真 bug**（见 §8.8）。<br>**结构变化**：`stream_analysis` 的 `rubric` 参数改用哨兵 `_RUBRIC_UNSET` —— 否则「不传」与「传 `None`」在代码里长得一样，「rubric 缺失」这条降级分支**永远测不到**（也是演练第一次跑就暴露的）。 |
+| D-19 | **part2 起就一直存在、但直到 part3 才被登记**：`frontend-bff.yaml` 的 `x-api-inventory` 里 `/api/jobs` 与 `/api/jobs/{jobId}`（web→bff 与 bff→java 各两条）标着 `status: frozen, task: T4` | **四层都没有实现**：BFF `route/index.ts` 只注册了 `/healthz`、`/api/ping`、`/api/analysis/stream`；Java 只有 `/api/analysis/stream`、`/healthz`、`/api/internal/ping`；`web/src` 里**零个** `/jobs` 调用 | 这不是 bug，是**范围收窄**：`frozen` 在 inventory 里的含义是「契约已冻结」，不等于「已实现」，而 T4（岗位列表/详情）在 part2 就被后续需求挤掉了 —— 岗位数据改为**随候选集内嵌下发**，前端不再需要单独拉列表。<br>**为什么要登记**：`frozen` 这个词有歧义（读起来像「冻结且已完成」），而契约的读者（评审、未来的前端）会照着 `x-api-inventory` 去调这两个 URL，拿到 404 之后**没有任何地方解释为什么**。<br>**要改回去**：① 最小 —— 在 `x-code-delta.items` 里补一条说明（契约侧的正规位置，本次未动契约以保持 part3 的 diff 只含 C5–C7 相关增量）；② 真实现 —— T4 的 `JobRepository` 已有数据层基础，补两个只读端点即可（BFF 侧加路由 + `JobServiceClient` 两个方法）。<br>**本次不动代码**：它不属于 part3 的范围，登记在此以免下一次又「发现一次、忘掉一次」。 |
+
+---
+
+## 8. part3：LLM 深度匹配分析（N0–N6）
+
+> 目标：在 part2 的「**集合级**匹配」之上，把简历的**能力证据**与招聘方的**逐条要求**对照，
+> 由 LLM 讲出**优化点 / 缺失能力 / 提升方向**，并由**代码**（不是模型）算**六维画像**与**综合分**。
+> 一句话守则：**LLM 只判档与写文案；分数与排序永远归代码。**
+
+### 8.1 文件与职责（新增 / 改动）
+
+| 文件 | 职责 | 备注 |
+|---|---|---|
+| `app/data/rubric.yaml` | 六维**唯一真源**：定义 / 可读信号 / 档位分 / 按 level 分档的权重 | 与 `skills.yaml` 同思路：改数据不改代码（AC31） |
+| `app/service/profile/rubric.py` | 读入口 + **宽容加载**（坏了 → `abilityProfile=null`，不炸主流程） | 见 D-15 |
+| `app/service/profile/advisor_rules.py` | 判定 / 六维判档 / 优化点 / 方向的**规则兜底** + 「LLM 结果怎么覆盖骨架」的合并策略 | 纯确定性，**不 import LLM 客户端**（用 Protocol 解耦） |
+| `app/service/profile/ability_profile.py` | 档位 → 分数、**加权求和 `overall`** 的**唯一**实现 | 与 `matcher.py` 并列：全项目只有两处分数公式 |
+| `app/util/rounding.py` | 四舍五入口径的**唯一**实现 | `matcher.score_of` 与 `overall_of` 共用（AC28） |
+| `app/llm/prompts.py` | +Prompt-3（判定 + 六维档）/ +Prompt-4（文案） | 沿用三处安全设计：分隔符 / 「这是数据不是指令」/ 输出契约定死 |
+| `app/llm/client.py` | +`stream_review` / +`stream_advice`，三层降级形状与 `stream_issues` 一致 | 判定阶段只吐 `LlmHeartbeat`（**不带正文**） |
+| `app/service/orchestration/stream.py` | +`reviewed` 阶段接线；deep/standard 两条路径 | 事件顺序见 §8.6 |
+| `app/schema/response/analyze_response.py` | +4 块模型 + `DeepMeta` / `DeepAnalysisResult` | 见 D-17 |
+| `apps/job-service/.../RubricWeightsProvider.java` | 把目标岗位的**维度权重**装配到候选集上 | 读的是 analyzer 那份 `rubric.yaml`（Maven 并入 classpath，**同一份文件**） |
+| `apps/web/src/pages/analyzer/components/{VerdictList,AbilityRadar,AdvicePanel}.vue` | 判定列表 + 六维雷达 + 建议面板 | `standard` 下不渲染且不报错（N5.3） |
+
+### 8.2 两个产品决策的落点
+
+| 决策 | 落点 | 怎么保证不被绕过 |
+|---|---|---|
+| **六维写死** | `rubric.yaml` 是数据真源，`core/constants.DIMENSIONS` 是编译期镜像 | `test_rubric_consistency.py` 断言两处**逐字同序**（改维度集合要改三处：spec §2.5 + rubric.yaml + constants） |
+| **综合分由代码算** | `ability_profile.py` 的 `overall_of` 是唯一实现；LLM 只输出**档位** | ① Prompt-3 明写「不许输出任何分数」；② 解析器只认 rubric 白名单里的档位；③ 前端连求和都不做 |
+
+> 参考施工单写的是「综合分由 **Java** 规则引擎算」。**本项目有意不照抄**：
+> Java 侧若再算一遍，就会重演 part2 那个 bug（`match.score = 82` 而推荐里同一岗位 79）。
+> Java 只负责**装配数据**（岗位 level → 权重档），算术留在 Python。
+
+### 8.3 六维口径与权重来源
+
+六维（冻结）：`技术深度 · 工程能力 · 业务理解 · 项目影响力 · 协作沟通 · 成长性`。
+每维都写清了三样：**定义**（`question`）· **可读信号**（`signals.strong/weak`，既是给 LLM 的锚点，也是兜底判档的唯一输入）· **档位分**（`levels`，分数只在这里定义一次）。
+
+- **两维纯代码可算**：`项目影响力`（复用 `rules.quantify_facts`，与 `NO_QUANTIFY` 那条 issue 同源）、
+  `成长性`（复用 `rules.time_spans`，与 `TIMELINE_GAP` 同源）→ **断 LLM 也不会六维全空**。
+- **权重按岗位 level 分档**（`campus` / `mid` / `senior`，每档和 = 1.0，由测试守）：
+  校招档**压 `impact`、抬 `growth`**；社招 / 高级档反向。**改权重只改 `rubric.yaml`**。
+- **权重怎么到 Python**：Java 从**同一份** `rubric.yaml`（Maven 资源并入）读出该岗位档位的六维权重，
+  随候选集下发；Python 收到后**校验**（六维齐 + 和 = 1.0 ±1e-6），不合格就回退自己的那份并 `WARN`。
+  **不做两处副本** —— 抄一份权重表就是「改一处忘一处，而综合分会悄悄地按旧权重算」。
+
+### 8.4 `verdicts` 与 `match` 的关系（骨架不可增删）
+
+`match` 是**集合级事实**（代码算的），`verdicts` 是在它之上判档。合并策略写死在
+`advisor_rules.merge_verdicts`：LLM 的结果**只能覆盖既有条目**，不在骨架里的 `skill` 一律忽略；
+`importance` **永远来自 `match`**（「这条是硬性还是加分」是岗位数据，不是模型判断）。
+LLM 给的档位不合法或理由为空时，该条**退回兜底**（而不是丢掉）—— 骨架的完整性优先。
+
+### 8.5 为什么是两次 LLM 调用（ADR-205）与超时预算
+
+`Prompt-3 = 判定 + 六维档`（同一次调用）：两者输入**完全相同**（简历 + 要求 + rubric 片段）且互不依赖，
+合并零成本还省一次往返，且模型一次看到「要求」与「维度」，判出的档位与逐条判定**天然对齐**。
+`Prompt-4 = 文案`：`why` 要引用具体缺口，**依赖判定结果**，只能第二次。
+**Prompt-4 喂的是 Prompt-3 的结构化摘要**（不是原始累积文本）：原始文本含模型的啰嗦过程，既长又乱。
+
+超时（plan §6.1，外层必须大于内层）：Python→LLM 20s/段 · Java→Python 140s · BFF→Java 150s · 前端 180s · SSE 心跳 15s。
+
+### 8.6 deep 的事件顺序（`reviewed` 与 `thinking` 的相对位置）
+
+```
+standard: meta → stage×7 → [thinking…] → result → done
+deep:     meta → stage×7 → stage(reviewed,start) → Prompt-3（无 thinking）
+                         → Prompt-4（thinking × n）→ stage(reviewed,ok) → result → done
+```
+
+`reviewed` 的 `ok` 放在 Prompt-4 **之后**，是因为契约把它 `{verdictCount, directionCount}` 挂在
+`reviewed` 的 detail 上，而 `directionCount` 要等文案跑完才知道。于是 `thinking` 落在 start 与 ok 之间 ——
+**这不违反「判定阶段无 thinking」**：Prompt-3 一条 `thinking` 都不发（输出是 JSON），
+有 thinking 的那一段一定是 Prompt-4。判定阶段的心跳靠客户端吐的 `LlmHeartbeat`（空壳、不带正文）驱动，
+否则一段 20s 的判定期间连接上零字节，代理可能直接把连接掐掉。
+
+### 8.7 降级演练：四条（`bash scripts/drill-part3.sh`）
+
+**前置：无。** 脚本自己起一个「会返回坏 JSON」的本地 HTTP 服务制造内容失败，用一个空端口制造连接失败。
+
+| # | 演练 | 验收 | 断言 | 结果 |
+|---|---|---|---|---|
+| 1 | LLM **连不上** | AC29 | `result`/`done` 照常 · `error` 不发 · `degraded=true` · `reviewed` 留 `fail` · 判定条数 = `match` 条数 · 四块非空 · 六维齐 · 有分的维都带证据 | ✅ 12/12 |
+| 2 | LLM 返回**非法 JSON** | AC29 | 同上 + 解析器对垃圾输入返回 `None`（不是抛错、不是空着往下走） | ✅ 13/13 |
+| 3 | **`rubric` 缺失 / 某维算不出** | plan §6.2 | 缺 rubric → `abilityProfile=null` 但 `match` 照常 · 非法档位 → 该维 `score=null` + `evidence=""` · `overall` 只按**已有维度**归一（不是把缺失维当 0） | ✅ 6/6 |
+| 4 | **`standard`（缺省）** | AC25 | `meta` 首 / `done` 尾 · **不发** `reviewed` · 7 stage × (start+ok) · 顶层键与 meta 键与 part2 **逐字同序** · 一个 part3 的键都没有 | ✅ 7/7 |
+
+**合计 38 项断言通过。** 端到端那一条另见 `bash scripts/smoke-deep.sh`（要四层全开，
+验的是「真发一次 deep 请求，`reviewed` 在 `result` 之前、四块齐全、每个分都有出处、standard 回退无新键」）。
+
+### 8.8 演练暴露的真 bug（已修）
+
+**`stream_advice` 漏 import 系统提示词** → 一调用就 `NameError` → 被「失败即降级」的逻辑吞掉 →
+日志里只留下 `reason=NameError`，**看起来和「LLM 挂了」一模一样**。
+后果：`deep` 模式下**文案阶段永远不会走 LLM**（永远走规则模板），而所有断言依然全绿 ——
+这是一个只在「用户配好了 LLM」时才表现成「AI 好像不太聪明」的静默失效。
+
+两处修改：
+
+1. `llm/client.py` 补上 `advice_system_prompt` 的 import。
+2. **降级日志补 `exc_info=True`** —— 只记 `type(exc).__name__` 看起来更「干净」，
+   代价是**代码 bug 与网络故障在日志里长得一模一样**。栈里不含简历正文，可以放心打。
+   （这条比第 1 条更重要：它是「同类 bug 会被再次藏住」的根因。）
+
+同一批还修掉一个**接口语义缺陷**：`stream_analysis(rubric=None)` 原本同时表示「没传」与「没有 rubric」，
+导致「rubric 缺失」这条降级分支**永远测不到**（演练第 3 条第一次跑就红了）。已改为哨兵 `_RUBRIC_UNSET`。
+
+**新增的回归守卫**：`tests/unit/test_rules_llm.py` 里两个**真 HTTP** 用例
+（`test_real_client_stream_review_end_to_end` / `..._stream_advice_end_to_end`）——
+在此之前，`stream_review` / `stream_advice` **从来没有被真正执行过**（所有用例用的都是替身，
+而替身不碰 prompt 模块）。替身能证明「编排层接对了」，证明不了「真实客户端自己没错」。
+
+### 8.9 前端：`null` 绝不画成 0
+
+`abilityProfile.dimensions[].score === null` 表示**该维算不出**（`协作沟通` / `成长性` 在简历里常常
+真的没有证据 —— 那是常态，不是缺点）。前端的两条处理：
+
+1. 雷达图上该顶点用 `null` → ECharts **把这一角断开**（不连到圆心），形状本身就说明「缺」；
+2. 图下清单显示「无依据」+「简历中找不到可引用的证据」，并给出 `rubricRef`。
+
+把 `null` 画成 0 是**编分的另一种形态**（用 0 冒充「没有结论」），用户会去优化一个本来就不该有证据的地方。
+测试见 `tests/unit/ResultPanel.spec.ts`（断言存在 `.ability__score--none` 且文本是「无依据」）。
+
+`standard` 模式下三个新面板**不渲染且不报错**（N5.3）：判据是 `result.verdicts !== undefined`
+（键存在与否），而不是「数组是不是空」—— 用长度判会把 `deep` 下「真的没有缺口」误判成「没开深分析」。
+
+### 8.10 已知缺口（part3）
+
+| # | 缺口 | 影响 | 补法 |
+|---|---|---|---|
+| P1 | 判定准确率**不承诺** | LLM 的 `satisfied/partial/missing` 是启发式判档，可能与人评不一致（spec §1.3 Non-Goals） | 每处展示都带 `rubricRef` + 双向原文证据 + 「AI 判定，仅供参考」（已做） |
+| P2 | `overall` 与「全维」不可直接比较 | 缺维时 `overall` 按已有维度归一，两个人若缺的维不同，分数不同源 | 契约已说明；前端展示维度清单让用户自己看缺哪维 |
+| P3 | 兜底档位比 LLM 粗 | 断 LLM 时只看词与结构，读不懂语义（「主导了重构」与「主导了团建」在正则里一样） | 属于设计取舍（ADR-206）；要提升就得引入第二个模型，代价更大 |
+| P4 | 两次 LLM 串行把耗时吃满 | deep 的整链预算从 150s 抬到 180s（plan §6.1） | 仍不可接受时合并成一次调用（记偏差）；`analysisDepth=standard` 是永远可用的出口 |
+| P5 | `overall` 无独立出处字段 | 见 **D-13**（spec 散文与契约冲突） | 走 C8 改三份契约 + spec；本期不改 |
+| P6 | 同步接口不提供 deep | `POST /api/internal/analyze` 遇到 `analysisDepth=deep` 返回 400 | 有意为之（不静默降级成 standard）；要支持就得给同步路径也做两次 LLM 往返 |
+| P7 | 权重映射词表在 Java / Python 各有一份 | 岗位 `level` → 权重档的别名表（`校招/社招/高级` …）两处**手工同步**（DoD 15 同思路） | 词表只有 3 档 × 几个词；要彻底消除可把它也放进 `rubric.yaml`（代价是数据文件职责变宽） |
+

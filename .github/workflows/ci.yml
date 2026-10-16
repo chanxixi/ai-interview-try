@@ -117,6 +117,43 @@ jobs:
           fi
           echo "OK：岗位只软删"
 
+      # 门禁⑦（part3）：简历正文绝不进日志（spec §3 禁止项）。
+      #   简历是 PII，而「顺手 logger.info(resume_text)」这类代码在评审里极不起眼 ——
+      #   等发现时日志早就落盘了。用一条 grep 把它变成**结构上不可能**。
+      - name: 门禁⑦ 简历正文不进日志
+        working-directory: workspace
+        run: |
+          hits=$(grep -rnE 'resume_text|resumeText' apps/analyzer/app/ \
+                   | grep -E 'logger\.|logging\.|print\(' || true)
+          if [ -n "$hits" ]; then
+            printf '%s\n' "$hits"
+            echo "::error::简历正文出现在日志调用里（spec §3 禁止 PII 进日志）"
+            exit 1
+          fi
+          echo "OK：简历正文只进内存与响应体"
+
+      # 门禁⑧（part3）：`reviewed` 阶段在**三份契约 + Python 枚举**四处一致。
+      #   漏一处的表现是静默的：前端按 BFF 的阶段表渲染，而 BFF 的契约里没有它 →
+      #   进度条少一格，或者那一格永远转不动（spec §2.4 明确禁止）。
+      - name: 门禁⑧ reviewed 阶段四处一致
+        working-directory: workspace
+        run: |
+          for f in contracts/frontend-bff.yaml contracts/bff-java.yaml contracts/bff-python.yaml; do
+            if ! grep -q 'reviewed' "$f"; then
+              echo "::error::$f 缺少 reviewed 阶段（C5）"
+              exit 1
+            fi
+          done
+          grep -q 'REVIEWED = "reviewed"' apps/analyzer/app/schema/response/sse_event.py || {
+            echo "::error::Python 的 StageName 缺少 REVIEWED"
+            exit 1
+          }
+          grep -q "'reviewed'" apps/web/src/api/analysis.ts || {
+            echo "::error::前端的 STAGE_ORDER 缺少 reviewed"
+            exit 1
+          }
+          echo "OK：reviewed 在三份契约 + Python + 前端四处一致"
+
   # ==========================================================================
   # 1. analyzer（Python / FastAPI）—— 解析 · 归一化 · 匹配 · 流式
   # ==========================================================================
@@ -138,17 +175,28 @@ jobs:
       - name: 安装依赖
         run: python -m pip install -r requirements.txt
 
-      # M8.4 点名的三个文件：解析（含真实样本门禁）/ 打分手算 / 事件序列
-      - name: 关键回归（解析 · 匹配 · 流式）
+      # M8.4 点名的三个文件（part3 起加入六维与降级相关用例）
+      - name: 关键回归（解析 · 匹配 · 流式 · 六维 · 兜底 · 能力探测）
         run: |
           python -m pytest \
-            tests/unit/test_pdf_parser.py \
-            tests/unit/test_matcher.py \
-            tests/unit/test_stream.py \
+            tests/unit/document/test_pdf_parser.py \
+            tests/unit/match/test_matcher.py \
+            tests/unit/orchestration/test_stream.py \
+            tests/unit/profile/test_ability_profile.py \
+            tests/unit/profile/test_advisor_rules.py \
+            tests/unit/profile/test_rubric_consistency.py \
+            tests/api/test_capabilities.py \
             -v
 
       - name: 全量测试
         run: python -m pytest -q
+
+      # part3 降级演练（四条 / AC29）：**打桩在进程内**，不需要任何外部服务，
+      # 所以它能进 CI —— 而 part2 的 drill-degradation.sh 要四层全开，只能人工跑。
+      # 这条是 N6.1 的「逐一留档」里那四条断言的自动版；它上线第一次跑就抓到了
+      # `stream_advice` 的一个 NameError（被降级日志伪装成「LLM 不可用」）。
+      - name: part3 降级演练（四条 / AC29）
+        run: python ../../scripts/drill_part3.py
 
   # ==========================================================================
   # 2. job-service（Java 17 / Spring Boot）—— 领域 API + 持久化 + 候选集装配
@@ -208,8 +256,9 @@ jobs:
         run: npm run type-check
 
       # M8.4 点名的 e2e：SSE 事件序列 + AC12/AC13/AC21 三条边界
-      - name: 关键回归（流式 e2e）
-        run: npx jest tests/e2e/stream.test.ts
+      # part3 追加能力探测 e2e（`llmEnabled ∧ analyzerReachable` 的三种组合）
+      - name: 关键回归（流式 e2e · 能力探测 e2e）
+        run: npx jest tests/e2e/stream.test.ts tests/e2e/capabilities.test.ts
 
       - name: 全量测试
         run: npm test
@@ -244,9 +293,16 @@ jobs:
       - name: 类型检查
         run: npm run type-check
 
-      # M8.4 点名的用例：SSE 分帧 + 流式状态机（含跨 chunk 截断）
-      - name: 关键回归（流式解析）
-        run: npx vitest run tests/unit/useAnalysisStream.spec.ts tests/unit/sse.spec.ts
+      # M8.4 点名的用例：SSE 分帧 + 流式状态机（含跨 chunk 截断）；
+      # part3 追加 `ResultPanel.spec.ts`（standard 响应不渲染新面板且不报错 = N5.3）
+      # 与 `UploadPanel.spec.ts`（能力不可用时禁用「深度」并把已选值拨回标准）
+      - name: 关键回归（流式解析 · part3 面板边界 · 深度开关联动）
+        run: |
+          npx vitest run \
+            tests/unit/useAnalysisStream.spec.ts \
+            tests/unit/sse.spec.ts \
+            tests/unit/ResultPanel.spec.ts \
+            tests/unit/UploadPanel.spec.ts
 
       - name: 全量测试
         run: npm test

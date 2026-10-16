@@ -72,6 +72,8 @@ public class AnalyzerStreamClient {
      * @param jobId        目标岗位；可空
      * @param jdText       目标 JD 原文；可空
      * @param candidates   JSON 字符串形式的候选集；可空
+     * @param analysisDepth part3：分析深度（{@code standard} / {@code deep}）；可空 → 由 analyzer 落回缺省
+     * @param topN         part3：推荐条数上限；可空 → 由 analyzer 落回 3
      * @param onLine       每读到一行的回调。<b>只在本方法的线程里被调用</b>
      * @return analyzer 返回的 HTTP 状态码（200 表示流已建立）
      */
@@ -81,6 +83,8 @@ public class AnalyzerStreamClient {
                       String jobId,
                       String jdText,
                       String candidates,
+                      String analysisDepth,
+                      Integer topN,
                       Consumer<String> onLine) {
         MultiValueMap<String, Object> form = new LinkedMultiValueMap<>();
         if (fileBytes != null) {
@@ -105,6 +109,15 @@ public class AnalyzerStreamClient {
         }
         if (candidates != null) {
             form.add("jobCandidates", candidates);
+        }
+        // part3：只在**调用方显式传了**才带上。缺省时不发这两个 part ——
+        // 让「缺省」这件事由 analyzer 一侧决定（它落回 standard / 3），
+        // 而不是在这里替它写一遍默认值（两处默认值必然漂移）。
+        if (analysisDepth != null) {
+            form.add("analysisDepth", analysisDepth);
+        }
+        if (topN != null) {
+            form.add("topN", topN.toString());
         }
 
         return restClient.post()

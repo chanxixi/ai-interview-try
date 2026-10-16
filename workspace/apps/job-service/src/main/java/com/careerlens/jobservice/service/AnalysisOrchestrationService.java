@@ -1,5 +1,6 @@
 package com.careerlens.jobservice.service;
 
+import com.careerlens.jobservice.config.rubric.RubricWeightsProvider;
 import com.careerlens.jobservice.dto.JobCandidateDto;
 import com.careerlens.jobservice.dto.RequirementDto;
 import com.careerlens.jobservice.entity.JobCategoryEntity;
@@ -50,15 +51,19 @@ public class AnalysisOrchestrationService {
     private final JobRequirementRepository requirementRepository;
     private final JobCategoryRepository categoryRepository;
     private final SkillRepository skillRepository;
+    /** part3 N2.3：维度权重装配。**唯一**来源，与 analyzer 读同一份 {@code rubric.yaml}。 */
+    private final RubricWeightsProvider rubricWeightsProvider;
 
     public AnalysisOrchestrationService(JobRepository jobRepository,
                                         JobRequirementRepository requirementRepository,
                                         JobCategoryRepository categoryRepository,
-                                        SkillRepository skillRepository) {
+                                        SkillRepository skillRepository,
+                                        RubricWeightsProvider rubricWeightsProvider) {
         this.jobRepository = jobRepository;
         this.requirementRepository = requirementRepository;
         this.categoryRepository = categoryRepository;
         this.skillRepository = skillRepository;
+        this.rubricWeightsProvider = rubricWeightsProvider;
     }
 
     /**
@@ -152,6 +157,10 @@ public class AnalysisOrchestrationService {
         candidate.setCompany(job.getCompany());
         candidate.setLevel(job.getLevel());
         candidate.setCategory(categoryCodeById.get(job.getCategoryId()));
+
+        // part3 N2.3：把该岗位的维度权重档装配上去（拿不到就留 null，Python 回退自己的 rubric）。
+        candidate.setWeightLevel(rubricWeightsProvider.weightLevelFor(job.getLevel()));
+        candidate.setDimensionWeights(rubricWeightsProvider.weightsFor(job.getLevel()).orElse(null));
 
         List<RequirementDto> dtos = new ArrayList<>();
         if (requirements != null) {

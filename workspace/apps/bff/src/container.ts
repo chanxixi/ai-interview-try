@@ -1,5 +1,6 @@
 import { createJobServiceClient } from './client/jobService.client';
 import { AnalysisController } from './controller/analysis.controller';
+import { CapabilitiesController } from './controller/capabilities.controller';
 import { HealthController } from './controller/health.controller';
 import { JobController } from './controller/job.controller';
 import { createJobService } from './service/job.service';
@@ -35,6 +36,7 @@ export function buildContainer() {
     controllers: {
       health: new HealthController(),
       job: new JobController(jobService),
+      capabilities: new CapabilitiesController(jobService),
       analysis: new AnalysisController(analysisDeps),
     },
   };

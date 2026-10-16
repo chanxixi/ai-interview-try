@@ -33,9 +33,7 @@
 """
 
 from __future__ import annotations
-
 from pathlib import Path
-
 import yaml
 
 #: `app/data/` 的绝对路径。**全项目唯一**拼接这个路径的地方。

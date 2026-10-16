@@ -1,7 +1,8 @@
 import { computed, ref, shallowRef } from 'vue';
 
 import {
-  STAGE_ORDER,
+  stageOrderFor,
+  type AnalysisDepth,
   type AnalysisInput,
   type AnalyzeResult,
   type DonePayload,
@@ -34,7 +35,7 @@ import { createSseFrameParser } from '../../../utils/sse';
  * 「必须读完文件才知道的」只能走流内事件。前端两条都要处理，否则 415 会显示成「没反应」。
  */
 
-/** 单个阶段的视图状态。进度条按 `STAGE_ORDER` 渲染，状态从事件里回填。 */
+/** 单个阶段的视图状态。进度条按**本次请求的深度**对应的阶段表渲染。 */
 export interface StageState {
   stage: StageName;
   status: StageStatus | 'pending';
@@ -42,14 +43,28 @@ export interface StageState {
   detail: Record<string, unknown>;
 }
 
-function initialStages(): StageState[] {
-  return STAGE_ORDER.map((stage) => ({ stage, status: 'pending', elapsedMs: 0, detail: {} }));
+/**
+ * 初始阶段列表。
+ *
+ * ⚠️ 阶段表由**深度**决定：`standard` 是 7 格、`deep` 是 8 格（多 `reviewed`）。
+ * 用「请求时就知道的深度」而不是「等后端发不发」来定形状 —— 否则进度条会先画出
+ * 8 格、再在 `standard` 下永久留一格转不动的 `reviewed`（spec §2.4 明确禁止）。
+ */
+function initialStages(depth: AnalysisDepth): StageState[] {
+  return stageOrderFor(depth).map((stage) => ({
+    stage,
+    status: 'pending',
+    elapsedMs: 0,
+    detail: {},
+  }));
 }
 
 export function useAnalysisStream(baseUrl = '') {
   const isStreaming = ref(false);
   const meta = ref<MetaPayload | null>(null);
-  const stages = ref<StageState[]>(initialStages());
+  /** 本次请求的深度。缺省 `standard` —— 与后端缺省一致（AC25 的可回退开关）。 */
+  const analysisDepth = ref<AnalysisDepth>('standard');
+  const stages = ref<StageState[]>(initialStages(analysisDepth.value));
   /** 打字机文本：每条 `thinking` 的 `delta` 追加。降级时可能一直是空串。 */
   const thinking = ref('');
   /** 用 shallowRef：结果对象是整体替换的，不需要深响应，省掉一层递归代理。 */
@@ -89,7 +104,7 @@ export function useAnalysisStream(baseUrl = '') {
   function reset(): void {
     isStreaming.value = false;
     meta.value = null;
-    stages.value = initialStages();
+    stages.value = initialStages(analysisDepth.value);
     thinking.value = '';
     result.value = null;
     error.value = null;
@@ -109,6 +124,8 @@ export function useAnalysisStream(baseUrl = '') {
    * 这样组件里不用写 try/catch，模板也永远有一个确定的渲染分支。
    */
   async function start(input: AnalysisInput): Promise<void> {
+    // 深度要在 reset() **之前**定下来 —— reset 按它决定进度条有几格
+    analysisDepth.value = input.analysisDepth ?? 'standard';
     reset();
     isStreaming.value = true;
 
@@ -124,6 +141,15 @@ export function useAnalysisStream(baseUrl = '') {
     }
     if (input.jdText) {
       form.append('jdText', input.jdText);
+    }
+    // part3：**只在显式选了非缺省值时才带**。
+    // 缺省不发，让「缺省 = standard / 3」只由后端一处定义 ——
+    // 前端再写一遍默认值，就成了两处默认值，迟早漂移（BFF 也是同一个口径）。
+    if (input.analysisDepth && input.analysisDepth !== 'standard') {
+      form.append('analysisDepth', input.analysisDepth);
+    }
+    if (typeof input.topN === 'number') {
+      form.append('topN', String(input.topN));
     }
 
     controller = new AbortController();
@@ -212,6 +238,7 @@ export function useAnalysisStream(baseUrl = '') {
     // 状态
     isStreaming,
     meta,
+    analysisDepth,
     stages,
     currentStage,
     thinking,

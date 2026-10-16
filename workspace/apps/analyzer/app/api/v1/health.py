@@ -1,7 +1,6 @@
 """健康检查：spec.md §2.8 要求每个服务暴露 GET /healthz。"""
 
 from fastapi import APIRouter
-
 from app.core.config import settings
 from app.schema.response.health_response import HealthResponse
 

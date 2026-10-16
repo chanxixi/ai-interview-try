@@ -9,14 +9,12 @@
 
 import logging
 from contextlib import asynccontextmanager
-
 from fastapi import FastAPI
-
 from app.api.v1 import health, internal, stream
 from app.core.config import settings
-from app.core.exception_handlers import register_exception_handlers
-from app.core.logging import setup_logging
-from app.core.trace import TraceIdMiddleware
+from app.core.errors.exception_handlers import register_exception_handlers
+from app.core.observability.logging import setup_logging
+from app.core.observability.trace import TraceIdMiddleware
 
 setup_logging(settings.log_level)
 

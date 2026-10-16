@@ -111,6 +111,7 @@ x-api-inventory:
   entries:
     - { hop: "web→bff",     method: GET,    path: "/healthz",                     status: implemented, task: "P0",       note: "运维探针；全项目唯一不以 /api 开头的路径（spec §2.8 冻结）" }
     - { hop: "web→bff",     method: GET,    path: "/api/ping",                    status: implemented, task: "P0",       note: "全链连通性探针，逐跳回显 service/runtime/traceId" }
+    - { hop: "web→bff",     method: GET,    path: "/api/capabilities",            status: new,         task: "part3",    note: "能力探测：前端据此决定是否放开「深度」分析（llmEnabled ∧ analyzerReachable）" }
     - { hop: "web→bff",     method: POST,   path: "/api/analysis",                status: frozen,      task: "T3",       note: "同步分析；part2 起响应体升级为 §2.3（新增 recommendations、match 可空）" }
     - { hop: "web→bff",     method: POST,   path: "/api/analysis/stream",         status: new,         task: "M6",       note: "流式分析（SSE）；Accept 不含 text/event-stream 时回退同步 JSON（AC21）" }
     - { hop: "web→bff",     method: GET,    path: "/api/jobs",                    status: frozen,      task: "T4",       note: "岗位列表；支持 ?category= 过滤（AC22）" }
@@ -122,9 +123,11 @@ x-api-inventory:
     - { hop: "bff→java",    method: POST,   path: "/api/analysis",                status: new,         task: "T3/M5",    note: "★C3 的必然推论：BFF 禁止直连 Python，同步链也必须过 Java（plan §3 未列出，本契约补上并标注）" }
     - { hop: "bff→java",    method: POST,   path: "/api/analysis/stream",         status: new,         task: "M5",       note: "multipart 字节透传 + SSE 透传" }
     - { hop: "bff→java",    method: GET,    path: "/api/internal/ping",           status: implemented, task: "P0",       note: "现状为 /internal/ping，待 M5/M6 对齐（见 x-code-delta）" }
+    - { hop: "bff→java",    method: GET,    path: "/api/internal/capabilities",   status: new,         task: "part3",    note: "现状 /internal/capabilities；与 ping 同批对齐（见 x-code-delta）" }
     - { hop: "java→python", method: POST,   path: "/api/internal/analyze",        status: implemented, task: "P3",       note: "现状为 /internal/analyze，待 M2 对齐（见 x-code-delta）" }
     - { hop: "java→python", method: POST,   path: "/api/internal/analyze/stream", status: new,         task: "M4",       note: "SSE 生成端；Java 收到首事件后才开始转发（plan §1.2）" }
     - { hop: "java→python", method: GET,    path: "/api/internal/ping",           status: implemented, task: "P0",       note: "现状为 /internal/ping，待 M2 对齐" }
+    - { hop: "java→python", method: GET,    path: "/api/internal/capabilities",   status: new,         task: "part3",    note: "现状 /internal/capabilities；`llm_enabled` 的唯一对外出口（前端不推断）" }
     - { hop: "bff→java",    method: POST,   path: "/api/admin/jobs",              status: reserved,    task: "扩展位",   note: "人工录入岗位（source=manual）；本期不实现（鉴权属 part1 Out of Scope），只冻结命名 —— part2 spec §2.9" }
     - { hop: "bff→java",    method: DELETE, path: "/api/admin/jobs/{code}",       status: reserved,    task: "扩展位",   note: "软删岗位（status=archived + deleted_at）；禁止物理 DELETE（D2）" }
 
@@ -218,6 +221,38 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PingResult' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+        '504': { $ref: '#/components/responses/UpstreamTimeout' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/capabilities:
+    get:
+      tags: [health]
+      operationId: capabilities
+      summary: 能力探测（part3）
+      description: |
+        回答「链路可达之后**能做什么**」，供前端决定要不要放开 part3 的「深度」分析。
+        判据是两个条件的合取：`llmEnabled && analyzerReachable`（深度需要 LLM，而 LLM 在 analyzer 上）。
+
+        与 `/api/ping` 的分工：ping 答「通不通」，本端点答「能做什么」。二者都**不因内部分支返回 5xx**
+        —— analyzer 不可达是一种**正常回报**（两个布尔值均为 false），不是错误。
+
+        ⚠️ 只暴露能力布尔值，**不暴露** `base_url` / `model` 等配置值（spec §3.3）：
+        配置是内部实现，泄露出去等于把「用哪个模型」变成对外承诺。
+      parameters:
+        - $ref: '#/components/parameters/TraceIdHeader'
+      responses:
+        '200':
+          description: 能力现状（analyzer 可达与否都走这里）
+          headers:
+            X-Trace-Id: { $ref: '#/components/headers/TraceId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CapabilitiesResult' }
+              examples:
+                llmOn:        { value: { llmEnabled: true,  analyzerReachable: true } }
+                llmOff:       { value: { llmEnabled: false, analyzerReachable: true } }
+                analyzerDown: { value: { llmEnabled: false, analyzerReachable: false } }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
         '504': { $ref: '#/components/responses/UpstreamTimeout' }
         '500': { $ref: '#/components/responses/InternalError' }
@@ -638,6 +673,21 @@ components:
         traceId: { type: ['string', 'null'] }
         error: { type: string, description: "本跳失败时的错误类型名（不含堆栈）" }
         downstream: { $ref: '#/components/schemas/PingResult' }
+
+    CapabilitiesResult:
+      type: object
+      description: |
+        能力探测结果（part3）。与 `PingResult` 的分工：ping 答「通不通」，本模型答「能做什么」。
+        BFF 只暴露前端决策所需的**最小事实** —— 诊断字段（`service` / `error`）留在内部跳，不上浮。
+      required: [llmEnabled, analyzerReachable]
+      properties:
+        llmEnabled:
+          type: boolean
+          description: analyzer 的 LLM 是否启用（`LLM_*` 三项齐全）。`llmEnabled && analyzerReachable` 为假时应禁用「深度」
+        analyzerReachable:
+          type: boolean
+          description: analyzer 是否可达。不可达时 `llmEnabled` 必为 false（能力未知按不可用处理）
+      additionalProperties: false
 
     Source:
       type: string

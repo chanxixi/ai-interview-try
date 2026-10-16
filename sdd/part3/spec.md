@@ -59,6 +59,7 @@
 | **C5** | SSE **7 阶段** | **+1 阶段 `reviewed`**（`llm` 之后、`result` 之前） | 「逐条判定」是独立的一段耗时，塞进 `llm` 会让进度条**说谎** |
 | **C6** | 响应 4 块 + `recommendations` | **新增 4 个字段块**（§2.3） | 纯增量；已有字段名 / 层级 / 类型**不动** |
 | **C7** | `Top-N = 3`（常量 `RECOMMEND_TOP_N`） | **Top-N 可配**（默认 3，上限 10） | 需要「十个岗位」；默认值不动，AC17 不被破坏 |
+| **C8** | 无能力探测端点 | **新增 `GET /api/capabilities`**（及内两跳 `GET /internal/capabilities`） | 入口层要「自动决定深度」就必须知道 LLM 是否可用；**前端看不到环境变量**，不探测只能猜（§2.6.1） |
 
 > **纯增量约束（沿用 part2 附录 C）**：三份 OpenAPI `git diff` **不得出现 `-` 行**。
 
@@ -199,6 +200,27 @@ meta → stage(accepted) → stage(parsed) → stage(cleaned) → stage(normaliz
 > **「不编分」是硬要求**：算不出来就留空、`overall` 少算一维，比编一个看起来合理的分数**更诚实**。
 > 这条与 `rules.py` 的「宁可漏不可编」是同一个取向。
 
+### 2.6.1 入口层的「自动决定深度」（C8：能力探测）
+
+**后端 deep 的规则兜底不因此改变**（§2.6 / AC29 原样成立）—— 变化只在**入口层**：
+前端先问一次「LLM 可用吗」，再决定「深度」这个选项**能不能选、默认选不选**。
+
+| 探测结论 | 能否选「深度」 | 默认选中 | 理由 |
+|---|---|---|---|
+| `available`（LLM 三项齐全**且** analyzer 可达） | ✅ | **`deep`** | 「有 LLM 就用 LLM」 |
+| `unknown`（探测未回来 / 探测失败） | ✅ | `standard` | **fail-open**：探测是优化不是前提；既不把功能藏起来，也不凭空预置 deep（否则会白等两次 LLM 往返） |
+| `unavailable`（LLM 未配 / analyzer 不可达） | ❌ | `standard` | 禁用 + 常驻提示；已选 `deep` 会被拨回 `standard`（按钮禁用却停在 `deep` 是界面说不通的状态） |
+
+- **接口形状**：`GET /api/capabilities` → `{ llmEnabled: boolean, analyzerReachable: boolean }`；
+  判据是两个条件的**合取**（深度需要 LLM，而 LLM 在 analyzer 上）。
+- **不可达是正常回报（HTTP 200），不是 5xx** —— 与 `/api/ping` 同族：探针的语义是**报告状态**。
+  analyzer 不可达时两个布尔都回 `false`，前端据此禁用，而不是弹一次错误。
+- **只暴露能力布尔值**：`base_url` / `model` 等配置值**绝不下发**（§3 安全）。
+- **`analysisDepth` 的接口缺省仍是 `standard`**（§2.2 / AC25 不变）。「默认 deep」是
+  **前端在探测到 LLM 可用时把选项预置为 deep**，不是改服务端缺省 —— 二者必须分开，
+  否则 AC25（standard 形状冻结）与 AC29（断 LLM 仍出四块）都会失守。
+- 探测失败**不阻断**分析页：能力未知时按放行处理，最后一道防线始终是后端的规则兜底（§2.6）。
+
 ### 2.7 语言分工表（每行必须回答「为什么是它」）
 
 | 层 | part3 新增什么 | 为什么是它 |
@@ -216,7 +238,7 @@ meta → stage(accepted) → stage(parsed) → stage(cleaned) → stage(normaliz
 
 ### 2.8 稳定面清单（合同锁死）
 
-- **HTTP**：请求 2 个新字段（§2.2）；响应 4 个新块（§2.3）
+- **HTTP**：请求 2 个新字段（§2.2）；响应 4 个新块（§2.3）；**+1 探针端点** `GET /api/capabilities`（§2.6.1 / C8）
 - **SSE**：**+1 阶段**，事件类型不变（§2.4）
 - **常量**（`core/constants.py`）：`DIMENSIONS`（六维，冻结）、`VERDICT_KINDS`（三档，冻结）、`MAX_GROWTH_DIRECTIONS = 5`
 - **数据**：`analyzer/app/data/rubric.yaml`（维度定义 + 分级 + 权重）
@@ -240,7 +262,7 @@ meta → stage(accepted) → stage(parsed) → stage(cleaned) → stage(normaliz
 
 ---
 
-## 4. 验收（AC24–AC35，十二行）
+## 4. 验收（AC24–AC36，十三行）
 
 ```
 AC24  deep 分析 → 事件序列含 reviewed 阶段；result 含 verdicts / improvements /
@@ -256,6 +278,8 @@ AC32  growthDirections 按 priority 升序，条数 ≤ 5
 AC33  简历正文不出现在任何日志；SSE 中除 thinking 外无正文回显
 AC34  deep 分析整体耗时 ≤ 150s
 AC35  topN=10 时 recommendations 条数 = min(10, 候选数)；topN 缺省仍为 3（AC17 不破）
+AC36  探测到 LLM 可用 → 「深度」默认选中且可切回「标准」；LLM 不可用 → 禁用并拨回标准；
+      探测失败（unknown）→ 放行但**不预置** deep；接口缺省仍为 standard（AC25 不破、AC29 不破）
 ```
 
 ---
@@ -290,4 +314,5 @@ Java（候选集加维度权重）· Vue（判定面板 + 雷达图）· 单测 
 |---|---|---|
 | v0.1 | 2026-10-15 | 初稿：依据 part2 已交付的 `matcher` / `recommender` / `llm` / SSE 做增量设计；确立「六维写死 + 综合分代码算」两个产品决策 |
 | v0.2 | 2026-10-15 | **六维定稿**：§2.5① 补「定义 + 可读信号 + 代码兜底判据」六维表，标明 `项目影响力` / `成长性` 两维可纯代码算；新增 **§2.5.1 三个产物分工**（含 `NO_QUANTIFY` 与 `项目影响力` 的同源不同粒度说明）与 **§2.5.2 两条硬性克制**（L0 不编分 / 权重不平均）；§2.4 明确 **`thinking` 只在文案阶段发**；§6 由「待拍板」改为「拍板记录」，8 项全部定稿（第 8 项改为 **Prompt-3 出判定+六维档 / Prompt-4 出文案**） |
+| v0.3 | 2026-10-16 | **入口层「自动决定深度」**：新增 **C8**（`GET /api/capabilities` 三跳能力探测）+ **§2.6.1**（`available`→默认 deep / `unavailable`→禁用拨回 / `unknown`→fail-open 放行不预置）+ **AC36**；§2.8 HTTP 稳定面 +1 探针端点。**接口缺省仍为 `standard`**（AC25 不变），**后端 deep 规则兜底一字未动**（AC29 不变） |
 

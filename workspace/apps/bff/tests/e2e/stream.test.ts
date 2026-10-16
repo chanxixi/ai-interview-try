@@ -37,6 +37,35 @@ function errorFrames(): string[] {
   return ['event: meta\ndata: {"traceId":"t","source":"pdf"}\n\n', 'event: error\ndata: {"code":"PDF_ENCRYPTED","message":"文件有密码","traceId":"t"}\n\n', 'event: done\ndata: {"elapsedMs":5}\n\n'];
 }
 
+/**
+ * part3 `deep` 模式的帧：比 standard 多一个 `stage(reviewed)`，
+ * `result` 里多四个块。**BFF 对它们不透明** —— 这一段就是用来验证「不解读、不裁剪」的。
+ */
+function deepFrames(): string[] {
+  const result = {
+    resume: { sections: {}, skills: [] },
+    issues: [],
+    match: { score: 52, matched: [], missing: [] },
+    recommendations: [],
+    meta: {
+      traceId: 't', llmUsed: true, degraded: false, elapsedMs: 120,
+      source: 'text', truncated: false, recommendationCount: 0,
+      analysisDepth: 'deep', verdictCount: 2, directionCount: 1,
+    },
+    verdicts: [{ skill: 'Kafka', importance: 'required', verdict: 'missing', reason: '无证据' }],
+    improvements: [{ area: '缺失能力', action: '补一条实践', evidence: '负责订单系统重构', targets: ['Kafka'] }],
+    growthDirections: [{ direction: '消息队列', why: '零证据', firstStep: '用一次', priority: 1 }],
+    abilityProfile: { dimensions: [{ name: '技术深度', score: 65, rubricRef: 'tech_depth.L2', evidence: 'x' }], overall: 65 },
+  };
+  const all =
+    'event: meta\ndata: {"traceId":"t","source":"text"}\n\n' +
+    'event: stage\ndata: {"stage":"llm","status":"ok"}\n\n' +
+    'event: stage\ndata: {"stage":"reviewed","status":"ok"}\n\n' +
+    `event: result\ndata: ${JSON.stringify(result)}\n\n` +
+    'event: done\ndata: {"elapsedMs":120}\n\n';
+  return [all.slice(0, 60), all.slice(60, 200), all.slice(200)];
+}
+
 function makeContainer(frames: string[], status = 200) {
   const forwarded: Array<Record<string, string>> = [];
 
@@ -194,5 +223,77 @@ describe('POST /api/analysis/stream', () => {
       .field('resumeText', '张三');
 
     expect(res.headers[TRACE_ID_HEADER.toLowerCase()]).toBe('trace-e2e-001');
+  });
+
+  // ------------------------------------------------------------------ part3（N4）
+
+  it('part3 deep：analysisDepth / topN 透传给 Java，且四个新块原样透传回前端', async () => {
+    const container = makeContainer(deepFrames());
+    const app = createApp(container as never);
+
+    const res = await request(app.callback())
+      .post(`${API_PREFIX}/analysis/stream`)
+      .set('Accept', 'text/event-stream')
+      .field('resumeText', '张三 熟悉 Java')
+      .field('jobId', 'job-a')
+      .field('analysisDepth', 'deep')
+      .field('topN', '5')
+      .buffer(true)
+      .parse((res, callback) => {
+        let text = '';
+        res.on('data', (chunk: Buffer) => (text += chunk.toString('utf8')));
+        res.on('end', () => callback(null, text));
+      });
+
+    expect(res.status).toBe(200);
+
+    // ① 两个新参数必须真的转发给 Java —— BFF 不做业务，但**不能把参数吃掉**
+    expect(container.forwarded[0]).toMatchObject({ analysisDepth: 'deep', topN: '5' });
+
+    // ② `reviewed` 阶段与四个新块对 BFF 是**不透明**的：原样透传，不解读、不裁剪
+    const body = String(res.body);
+    expect(body).toContain('"stage":"reviewed"');
+    for (const key of ['verdicts', 'improvements', 'growthDirections', 'abilityProfile']) {
+      expect(body).toContain(`"${key}"`);
+    }
+  });
+
+  it('part3：缺省（不传两个新参数）→ 转发里也不出现它们，由 analyzer 落回默认', async () => {
+    const container = makeContainer(upstreamFrames());
+    const app = createApp(container as never);
+
+    await request(app.callback())
+      .post(`${API_PREFIX}/analysis/stream`)
+      .set('Accept', 'text/event-stream')
+      .field('resumeText', '张三');
+
+    // 默认值只由 analyzer 一处决定；BFF 再写一遍就是两处默认值，迟早漂移
+    expect(container.forwarded[0]).not.toHaveProperty('analysisDepth');
+    expect(container.forwarded[0]).not.toHaveProperty('topN');
+  });
+
+  it('part3：非法 analysisDepth / 越界 topN → 400，且不建立流', async () => {
+    const cases: Array<[string, string]> = [
+      ['analysisDepth', 'ultra'],
+      ['topN', '0'],
+      ['topN', '11'],
+      ['topN', '3abc'],
+    ];
+
+    for (const [field, value] of cases) {
+      const container = makeContainer(upstreamFrames());
+      const app = createApp(container as never);
+
+      const res = await request(app.callback())
+        .post(`${API_PREFIX}/analysis/stream`)
+        .set('Accept', 'text/event-stream')
+        .field('resumeText', '张三')
+        .field(field, value);
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('INVALID_INPUT');
+      // 建流前就拒了 —— 上游一个字节都没收到
+      expect(container.forwarded).toHaveLength(0);
+    }
   });
 });

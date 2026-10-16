@@ -1,6 +1,6 @@
-"""LLM 客户端（M4.4）—— OpenAI 兼容网关的流式调用 + 失败即降级。
+"""LLM 客户端（M4.4 / part3 N1.3 · N3.1）—— OpenAI 兼容网关的流式调用 + 失败即降级。
 
-## 契约：一个异步生成器，两种事件
+## 契约：异步生成器 + 收尾事件
 
 ```python
 async for event in client.stream_issues(text, trace_id=...):
@@ -8,15 +8,23 @@ async for event in client.stream_issues(text, trace_id=...):
     # LlmFinished(issues=..., degraded_reason="")   恰好一次，收尾
 ```
 
-**为什么 `LlmFinished` 在失败时也一定发**：编排层（`analysis_stream_service`）
-不需要为「LLM 挂了」写一条单独的 except 分支 —— 它只需要看 `issues is None`
-就切到规则兜底。把失败归一成正常事件，控制流就从「try/except 森林」变成一条直线。
+part3 又加了两条流，**形状完全一致**（同样是「0..n 次进度事件 + 恰好一次收尾」）：
 
-## 三层降级，逐层记录原因
+| 方法 | Prompt | 进度事件 | 收尾事件 |
+|---|---|---|---|
+| `stream_issues` | Prompt-2 | `LlmThinking`（带正文，打字机） | `LlmFinished` |
+| `stream_review` | Prompt-3 | `LlmHeartbeat`（**空壳，不带正文** —— 输出是 JSON，spec §2.4 不发 thinking） | `LlmReviewFinished` |
+| `stream_advice` | Prompt-4 | `LlmThinking`（带正文，打字机） | `LlmAdviceFinished` |
+
+**为什么收尾事件在失败时也一定发**：编排层（`orchestration/stream`）
+不需要为「LLM 挂了」写一条单独的 except 分支 —— 它只需要看 `verdicts is None`
+就切到 `advisor_rules` 兜底。把失败归一成正常事件，控制流就从「try/except 森林」变成一条直线。
+
+## 三层降级，逐层记录原因（三条流共用同一套）
 
 | 层 | 触发 | 行为 |
 |---|---|---|
-| 未配置 | `settings.llm_enabled == False` | 不发任何 thinking，直接 `LlmFinished(issues=None)` |
+| 未配置 | `settings.llm_enabled == False` | 不发任何进度事件，直接收尾（内容为 `None`） |
 | 传输失败 | 连接错 / 超时 / 非 200 | 同上，`degraded_reason` 写真实原因 |
 | 内容失败 | 累积文本不是合法 JSON / 字段不合法 | 同上 |
 
@@ -30,113 +38,43 @@ OpenAI 官方 SDK 是同步优先、且为它的响应结构做了强类型封�
 少一个依赖少一个升级面（与选 pypdf 而不是 pdfplumber 是同一个理由）。
 """
 
-from __future__ import annotations
 
+from __future__ import annotations
 import json
 import logging
-from dataclasses import dataclass
-from typing import AsyncIterator, Protocol
-
+from typing import AsyncIterator
 import httpx
-
 from app.core.config import settings
-from app.llm.prompts import build_issue_prompt, system_prompt
-from app.schema.response.analyze_response import Issue, IssueType, Severity
+from app.core.constants import MAX_GROWTH_DIRECTIONS
+from app.llm.events import (
+    AdviceImprovement,
+    AllowedLevels,
+    LlmAdviceEvent,
+    LlmAdviceFinished,
+    LlmEvent,
+    LlmFinished,
+    LlmHeartbeat,
+    LlmReviewEvent,
+    LlmReviewFinished,
+    LlmThinking,
+)
+from app.llm.parsers import (
+    AdvicePayload,
+    ReviewPayload,
+    parse_advice,
+    parse_issues,
+    parse_review,
+)
+from app.llm.prompts import (
+    advice_system_prompt,
+    build_advice_prompt,
+    build_issue_prompt,
+    build_review_prompt,
+    review_system_prompt,
+    system_prompt,
+)
 
 logger = logging.getLogger(__name__)
-
-_JSON_FENCE = ("```json", "```")
-
-
-@dataclass(frozen=True)
-class LlmThinking:
-    """思考增量。`delta` 是**原文片段**，前端直接追加显示（打字机效果）。"""
-
-    delta: str
-
-
-@dataclass(frozen=True)
-class LlmFinished:
-    """收尾事件，恰好一次。
-
-    :param issues: 解析成功的 issues；`None` 表示**降级**（调用方走规则兜底）
-    :param degraded_reason: 降级原因，仅用于日志，**不进响应体**
-    """
-
-    issues: tuple[Issue, ...] | None = None
-    degraded_reason: str = ""
-
-
-LlmEvent = LlmThinking | LlmFinished
-
-
-class LlmClient(Protocol):
-    """LLM 客户端契约。Protocol 而非 ABC：测试替身不必继承。"""
-
-    def stream_issues(self, resume_text: str, *, trace_id: str) -> AsyncIterator[LlmEvent]: ...
-
-
-# ---------------------------------------------------------------- JSON 解析（宁可严，不要宽）
-
-
-def _strip_code_fence(text: str) -> str:
-    """去掉模型偶尔加的 Markdown 代码块围栏。
-
-    只剥首尾的 ```，不改中间内容 —— Prompt 里已经明确要求「不要代码块」，
-    这里只是容错，不是在鼓励。
-    """
-    stripped = text.strip()
-    for fence in _JSON_FENCE:
-        if stripped.startswith(fence):
-            stripped = stripped[len(fence) :]
-        if stripped.endswith("```"):
-            stripped = stripped[: -len("```")]
-    return stripped.strip()
-
-
-def parse_issues(raw: str) -> tuple[Issue, ...] | None:
-    """把模型输出解析成 issues；**任何不合法都返回 `None`（降级）**。
-
-    严在哪：
-    - 顶层必须是 `{"issues": [...]}`，不是裸数组；
-    - `type` / `severity` 必须命中冻结枚举，不认识的一律丢弃整条（不是整批）；
-    - `evidence` 必须是非空字符串 —— 空证据等于「模型编了一个结论但给不出依据」，
-      这种比没有更糟；
-    - 某一条不合法时**丢弃该条、保留其余**，只有全军覆没才返回 None。
-    """
-    text = _strip_code_fence(raw)
-    if not text:
-        return None
-    try:
-        payload = json.loads(text)
-    except (json.JSONDecodeError, ValueError):
-        return None
-    if not isinstance(payload, dict):
-        return None
-
-    raw_issues = payload.get("issues")
-    if not isinstance(raw_issues, list):
-        return None
-
-    issues: list[Issue] = []
-    for item in raw_issues:
-        if not isinstance(item, dict):
-            continue
-        try:
-            issue = Issue(
-                type=IssueType(item["type"]),
-                severity=Severity(item["severity"]),
-                evidence=str(item["evidence"]).strip(),
-                suggestion=str(item["suggestion"]).strip(),
-            )
-        except (KeyError, ValueError, TypeError):
-            continue
-        if not issue.evidence:
-            continue
-        issues.append(issue)
-
-    return tuple(issues) if issues else None
-
 
 # ---------------------------------------------------------------- 真实客户端
 
@@ -183,10 +121,16 @@ class OpenAiCompatibleClient:
             # 故意捕获**所有**异常：LLM 是外部依赖，任何失败都只应导致降级，
             # 不该让整条分析链崩掉。但异常对象只进日志，绝不进响应体
             # （spec §3.3：不透传内部实现细节）。
+            #
+            # `exc_info=True` 是**必须的**：只记 `type(exc).__name__` 看起来更「干净」，
+            # 代价是**代码 bug 与网络故障在日志里长得一模一样**。这个坑是 part3 的降级演练
+            # 逼出来的 —— `stream_advice` 里有个 `NameError`，因为被记成 `reason=NameError`
+            # 而当成「LLM 挂了」，降级断言全绿、bug 静默过关。栈里不含简历正文，可以放心打。
             logger.warning(
                 "llm stream failed, fallback to rules (traceId=%s, reason=%s)",
                 trace_id,
                 type(exc).__name__,
+                exc_info=True,
             )
             yield LlmFinished(issues=None, degraded_reason=type(exc).__name__)
             return
@@ -201,7 +145,118 @@ class OpenAiCompatibleClient:
         yield LlmFinished(issues=issues, degraded_reason="" if issues else "unusable_payload")
 
     async def _stream_deltas(self, resume_text: str, trace_id: str) -> AsyncIterator[str]:
-        """读 SSE 流，逐段 yield `choices[0].delta.content`。"""
+        """Prompt-2（issues）的流式调用。"""
+        async for delta in self._stream_messages(
+            [
+                {"role": "system", "content": system_prompt()},
+                {"role": "user", "content": build_issue_prompt(resume_text)},
+            ],
+            trace_id,
+        ):
+            yield delta
+
+    async def stream_review(
+        self,
+        resume_text: str,
+        *,
+        requirements_json: str,
+        rubric_slice_json: str,
+        allowed_levels: AllowedLevels,
+        trace_id: str,
+    ) -> AsyncIterator[LlmReviewEvent]:
+        """Prompt-3：判定 + 六维档。**三层降级，与 `stream_issues` 同形状。**
+
+        ⚠️ **不出 `thinking`**（spec §2.4）：输出是 JSON，逐字推给用户只会刷屏、
+        还会把结构暴露在 UI 上。这里只吐 `LlmHeartbeat`（空壳），
+        让编排层照样能发 SSE 心跳 —— 否则一段 20s 的判定期间连接上零字节。
+        """
+        if not self.enabled:
+            yield LlmReviewFinished(degraded_reason="llm_not_configured")
+            return
+
+        chunks: list[str] = []
+        try:
+            async for delta in self._stream_messages(
+                [
+                    {"role": "system", "content": review_system_prompt()},
+                    {
+                        "role": "user",
+                        "content": build_review_prompt(
+                            resume_text=resume_text,
+                            requirements_json=requirements_json,
+                            rubric_slice_json=rubric_slice_json,
+                        ),
+                    },
+                ],
+                trace_id,
+            ):
+                chunks.append(delta)
+                yield LlmHeartbeat()
+        except Exception as exc:                       # noqa: BLE001 —— 同 `stream_issues`
+            logger.warning(
+                "llm review failed, fallback to rules (traceId=%s, reason=%s)",
+                trace_id,
+                type(exc).__name__,
+                exc_info=True,
+            )
+            yield LlmReviewFinished(degraded_reason=type(exc).__name__)
+            return
+
+        payload = parse_review(
+            "".join(chunks), allowed_levels=allowed_levels, resume_text=resume_text
+        )
+        if payload is None:
+            logger.warning(
+                "llm review returned unusable payload, fallback to rules (traceId=%s, chars=%d)",
+                trace_id,
+                sum(len(chunk) for chunk in chunks),
+            )
+            yield LlmReviewFinished(degraded_reason="unusable_payload")
+            return
+        yield LlmReviewFinished(verdicts=payload.verdicts, dimensions=payload.dimensions)
+
+    async def stream_advice(self, brief_json: str, *, trace_id: str) -> AsyncIterator[LlmAdviceEvent]:
+        """Prompt-4：优化点 + 提升方向。文案阶段，**照常吐 `thinking`**（打字机效果）。"""
+        if not self.enabled:
+            yield LlmAdviceFinished(degraded_reason="llm_not_configured")
+            return
+
+        chunks: list[str] = []
+        try:
+            async for delta in self._stream_messages(
+                [
+                    {"role": "system", "content": advice_system_prompt()},
+                    {"role": "user", "content": build_advice_prompt(brief_json=brief_json)},
+                ],
+                trace_id,
+            ):
+                chunks.append(delta)
+                yield LlmThinking(delta=delta)
+        except Exception as exc:                       # noqa: BLE001 —— 同 `stream_issues`
+            logger.warning(
+                "llm advice failed, fallback to rules (traceId=%s, reason=%s)",
+                trace_id,
+                type(exc).__name__,
+                exc_info=True,
+            )
+            yield LlmAdviceFinished(degraded_reason=type(exc).__name__)
+            return
+
+        payload = parse_advice(
+            "".join(chunks), max_directions=MAX_GROWTH_DIRECTIONS, evidence_source=brief_json
+        )
+        if payload is None:
+            logger.warning(
+                "llm advice returned unusable payload, fallback to rules (traceId=%s, chars=%d)",
+                trace_id,
+                sum(len(chunk) for chunk in chunks),
+            )
+            yield LlmAdviceFinished(degraded_reason="unusable_payload")
+            return
+        yield LlmAdviceFinished(improvements=payload.improvements, directions=payload.directions)
+
+    async def _stream_messages(self, messages: list[dict], trace_id: str) -> AsyncIterator[str]:
+        """读 SSE 流，逐段 yield `choices[0].delta.content`。**三个 prompt 共用**。"""
         timeout = httpx.Timeout(self._timeout, connect=min(self._timeout, 5.0))
         client = self._client or httpx.AsyncClient(timeout=timeout)
         owns_client = self._client is None
@@ -217,10 +272,14 @@ class OpenAiCompatibleClient:
                 json={
                     "model": self._model,
                     "stream": True,
-                    "messages": [
-                        {"role": "system", "content": system_prompt()},
-                        {"role": "user", "content": build_issue_prompt(resume_text)},
-                    ],
+                    "messages": messages,
+                    # qwen3 系列默认开 thinking。实测（阿里云百炼 compatible-mode，
+                    # Prompt-4 同输入）：开 36.8s / 关 8.1s —— **慢 4.5 倍**，
+                    # 三次调用累计 122s，直接顶穿 Java 的 ANALYZER_TIMEOUT_MS=110000。
+                    # 而本服务的输出是**结构化 JSON**，思考链对结果无可观测收益，
+                    # 只会拖慢并把推理过程混进 delta。故显式关闭。
+                    # OpenAI 兼容网关忽略未知字段 —— 换 DeepSeek 等厂商不会因此报错。
+                    "enable_thinking": False,
                 },
             ) as response:
                 if response.status_code != 200:
@@ -251,11 +310,15 @@ class OpenAiCompatibleClient:
                         chunk = json.loads(payload)
                     except (json.JSONDecodeError, ValueError):
                         continue
-                    delta = (
-                        chunk.get("choices", [{}])[0]
-                        .get("delta", {})
-                        .get("content")
-                    )
+                    # 网关（阿里云百炼 compatible-mode 实测）在流末尾会发
+                    # `{"choices":[],"usage":{...}}` 这类**无 choices 的统计帧**。
+                    # 直接 `[0]` 会 IndexError —— 而它在 `except Exception` 里，
+                    # 结果是「内容其实全收到了，却因为最后一帧降级」。必须跳过而不是取值。
+                    choices = chunk.get("choices") or []
+                    if not choices:
+                        continue
+                    # `delta` 也可能为 null（thinking 帧只有 reasoning_content）→ `or {}` 兜住。
+                    delta = (choices[0].get("delta") or {}).get("content")
                     if delta:
                         yield delta
         finally:
@@ -264,10 +327,28 @@ class OpenAiCompatibleClient:
 
 
 class NullLlmClient:
-    """降级客户端：不发 thinking、不返回 issues。用于测试与本地无密钥开发。"""
+    """降级客户端：不发 thinking、不返回 issues / 判定 / 文案。用于测试与本地无密钥开发。
+
+    **三个方法都实现**（而不是只实现 `stream_issues`）：编排层永远有一个完整客户端可调，
+    不需要 `if hasattr(llm, ...)` 这类分叉 —— 少一个分叉就少一条没被测到的路径。
+    """
 
     async def stream_issues(self, resume_text: str, *, trace_id: str) -> AsyncIterator[LlmEvent]:
         yield LlmFinished(issues=None, degraded_reason="null_client")
+
+    async def stream_review(
+        self,
+        resume_text: str,
+        *,
+        requirements_json: str,
+        rubric_slice_json: str,
+        allowed_levels: AllowedLevels,
+        trace_id: str,
+    ) -> AsyncIterator[LlmReviewEvent]:
+        yield LlmReviewFinished(degraded_reason="null_client")
+
+    async def stream_advice(self, brief_json: str, *, trace_id: str) -> AsyncIterator[LlmAdviceEvent]:
+        yield LlmAdviceFinished(degraded_reason="null_client")
 
 
 def create_llm_client() -> LlmClient:

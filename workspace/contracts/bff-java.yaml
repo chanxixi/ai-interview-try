@@ -66,6 +66,7 @@ x-api-inventory-hop:
     - { method: POST,   path: "/api/analysis",         status: new,         task: "T3/M5", note: "★ C3 推论：同步链也必须过 Java（plan §3 只写了 stream，本契约补齐并标注）" }
     - { method: POST,   path: "/api/analysis/stream",  status: new,         task: "M5",    note: "multipart 字节透传 + SSE 透传" }
     - { method: GET,    path: "/api/internal/ping",    status: implemented, task: "P0",    note: "现状 /internal/ping，M5 对齐（见 x-code-delta）" }
+    - { method: GET,    path: "/api/internal/capabilities", status: new,    task: "part3", note: "能力探测；现状 /internal/capabilities，与 ping 同批对齐" }
 
 x-code-delta:
   description: |
@@ -714,6 +715,19 @@ components:
         level: { type: ['string', 'null'] }
         category: { type: ['string', 'null'] }
         requirements: { type: array, items: { $ref: '#/components/schemas/RequirementDto' } }
+        # ---- part3 增量（N2.3）：维度权重由 Java 装配下发。
+        #      为什么经过 Java：`abilityProfile.overall` 的权重「来自岗位侧」（spec §2.3），
+        #      而岗位数据只有 Java 有（part1 §2.6）。
+        #      ⚠️ Java 读的是 `analyzer/app/data/rubric.yaml`（Maven 资源并入，**同一份文件**），
+        #      因此不存在「两处权重表」；Python 收到后仍会**校验**（六维齐 + 和 = 1.0），
+        #      不合格就回退自己那份 —— 宁可回退也不按可疑权重算分。
+        weightLevel:
+          type: ['string', 'null']
+          description: "part3：权重档名（campus/mid/senior），由 `job.level` 归一而来"
+        dimensionWeights:
+          type: ['object', 'null']
+          additionalProperties: { type: number }
+          description: "part3：六维权重（键 = 维度 key，值 ∈ [0,1]，六维之和 = 1.0）"
       additionalProperties: false
 
     # ------------------------------------------------------------------ part3 增量（LLM 深度匹配分析）

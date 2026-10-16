@@ -20,6 +20,7 @@ const healthyJobService: JobServiceClient = {
       traceId,
     },
   }),
+  capabilities: async () => ({ service: 'job-service', analyzerReachable: true, llmEnabled: true }),
 };
 
 describe('e2e · GET /healthz', () => {

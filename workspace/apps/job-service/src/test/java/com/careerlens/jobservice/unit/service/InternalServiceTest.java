@@ -9,7 +9,9 @@ import static org.mockito.Mockito.when;
 import com.careerlens.jobservice.client.AnalyzerClient;
 import com.careerlens.jobservice.config.constants.TraceConstants;
 import com.careerlens.jobservice.config.properties.AppProperties;
+import com.careerlens.jobservice.dto.response.AnalyzerCapabilitiesResponse;
 import com.careerlens.jobservice.dto.response.AnalyzerPingResponse;
+import com.careerlens.jobservice.dto.response.CapabilitiesResponse;
 import com.careerlens.jobservice.dto.response.PingResponse;
 import com.careerlens.jobservice.service.InternalService;
 import org.junit.jupiter.api.AfterEach;
@@ -84,5 +86,42 @@ class InternalServiceTest {
 
         assertThat(result.traceId()).isEqualTo("trace-xyz");
         verify(client).ping("trace-xyz");
+    }
+
+    // --------------------------------------------------------------- 能力探测（part3）
+
+    /** analyzer 可达时，把它的能力原样透传：前端据此决定是否放开「深度」分析。 */
+    @Test
+    void capabilitiesForwardsAnalyzerCapabilityWhenUp() {
+        MDC.put(TraceConstants.MDC_KEY, "trace-cap");
+        AnalyzerClient client = mock(AnalyzerClient.class);
+        when(client.capabilities(any())).thenReturn(new AnalyzerCapabilitiesResponse("analyzer", true));
+
+        CapabilitiesResponse result = new InternalService(client, PROPERTIES, "job-service").capabilities();
+
+        assertThat(result.service()).isEqualTo("job-service");
+        assertThat(result.analyzerReachable()).isTrue();
+        assertThat(result.llmEnabled()).isTrue();
+        assertThat(result.error()).isNull();
+        verify(client).capabilities("trace-cap");
+    }
+
+    /**
+     * 核心安全契约：<b>analyzer 不可达时按「不可用」回报，而不是猜成可用</b>。
+     *
+     * <p>猜成 {@code llmEnabled=true} 会让前端放开一个必然只能规则兜底的功能 ——
+     * 用户会把兜底结果误认为 AI 产出，且没有任何运行期信号。
+     */
+    @Test
+    void capabilitiesDegradesToReachableFalseAndLlmFalseWhenAnalyzerThrows() {
+        AnalyzerClient client = mock(AnalyzerClient.class);
+        when(client.capabilities(any())).thenThrow(new ResourceAccessException("connection refused"));
+
+        CapabilitiesResponse result = new InternalService(client, PROPERTIES, "job-service").capabilities();
+
+        assertThat(result.analyzerReachable()).isFalse();
+        assertThat(result.llmEnabled()).isFalse();
+        // 只暴露类名，不带 message/堆栈（spec.md §3.3）
+        assertThat(result.error()).isEqualTo("ResourceAccessException");
     }
 }

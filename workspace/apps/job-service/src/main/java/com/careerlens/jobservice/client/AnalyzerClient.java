@@ -1,6 +1,7 @@
 package com.careerlens.jobservice.client;
 
 import com.careerlens.jobservice.config.constants.TraceConstants;
+import com.careerlens.jobservice.dto.response.AnalyzerCapabilitiesResponse;
 import com.careerlens.jobservice.dto.response.AnalyzerPingResponse;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -35,5 +36,14 @@ public class AnalyzerClient {
                 .header(TraceConstants.TRACE_ID_HEADER, traceId)
                 .retrieve()
                 .body(AnalyzerPingResponse.class);
+    }
+
+    /** 能力探测：询问 analyzer「链路可达之后还能做什么」（part3：LLM 是否启用）。 */
+    public AnalyzerCapabilitiesResponse capabilities(String traceId) {
+        return restClient.get()
+                .uri("/internal/capabilities")
+                .header(TraceConstants.TRACE_ID_HEADER, traceId)
+                .retrieve()
+                .body(AnalyzerCapabilitiesResponse.class);
     }
 }

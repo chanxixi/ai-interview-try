@@ -70,6 +70,7 @@ x-api-inventory-hop:
   entries:
     - { method: GET,  path: "/healthz",                     status: implemented, task: "P0", note: "探针" }
     - { method: GET,  path: "/api/internal/ping",           status: implemented, task: "P0", note: "现状 /internal/ping，M2 对齐" }
+    - { method: GET,  path: "/api/internal/capabilities",   status: new,         task: "part3", note: "能力探测：`llm_enabled` 的唯一对外出口；现状 /internal/capabilities" }
     - { method: POST, path: "/api/internal/analyze",        status: implemented, task: "P3", note: "现状 /internal/analyze（返回空四块的 stub）；M2/M3/M4 填真实实现" }
     - { method: POST, path: "/api/internal/analyze/stream", status: new,         task: "M4", note: "★ part2 新增：SSE 生成端" }
 
@@ -81,6 +82,16 @@ x-code-delta:
     - { current: "GET /internal/ping",     target: "GET /api/internal/ping",     file: "workspace/apps/analyzer/app/main.py", milestone: "M2" }
     - { current: "AnalyzeRequest{resumeText, jdText, traceId}", target: "新增 jobId + jobCandidates 两个字段（jdText 语义升级为「目标 JD 原文」）", file: "workspace/apps/analyzer/app/schema/request/analyze_request.py", milestone: "M2", note: "本跳是内部接口，无外部客户端，破坏性变更安全" }
     - { current: "POST /internal/analyze 返回**空四块** stub（TODO(T5)）", target: "返回 part2 spec §2.3 五块（含 recommendations、match 可空）", file: "workspace/apps/analyzer/app/service/analysis_service.py", milestone: "M3/M4" }
+    - current: "同步 `AnalyzeRequest` 里有 `analysisDepth`，但**只接受 standard**"
+      target: "本跳的同步接口是 part2 就有的**降级路径**（五块形状），`deep` 明确回 400 `INVALID_INPUT`"
+      file: "workspace/apps/analyzer/app/api/v1/internal.py"
+      milestone: "N4"
+      note: |
+        契约列了字段不等于每一条路径都要实现它 —— 但**绝不能静默降级**：
+        请求 `deep` 却按 `standard` 返回，调用方会以为拿到了画像（最坏的一种结果）。
+        `deep` 的价值一半在**进度反馈**上（`reviewed` 阶段本身就是 SSE 概念），
+        而同步接口给不了。要支持：给同步路径也做两次 LLM 往返（会长时间挂住连接）。
+        详见 `DELIVERY.md` §8.10 P6。
 
 paths:
 
@@ -480,6 +491,16 @@ components:
         level: { type: ['string', 'null'] }
         category: { type: ['string', 'null'], description: "分类 code；仅作元数据回填，**不参与打分**" }
         requirements: { type: array, items: { $ref: '#/components/schemas/Requirement' } }
+        # ---- part3 增量（N2.3）：与 `bff-java.yaml` 的 `JobCandidateDto` **逐字对应**。
+        #      权重由 Java 装配，Python 只**消费 + 校验**（六维齐 + 和 = 1.0），
+        #      不合格就回退 `rubric.yaml` —— 绝不按可疑权重算出一份看起来正常的画像。
+        weightLevel:
+          type: ['string', 'null']
+          description: "part3：权重档名（campus/mid/senior），由岗位 `level` 归一而来"
+        dimensionWeights:
+          type: ['object', 'null']
+          additionalProperties: { type: number }
+          description: "part3：六维权重（键 = 维度 key，值 ∈ [0,1]，六维之和 = 1.0）"
       additionalProperties: false
 
     # ------------------------------------------------------------------ 响应（part2 §2.3 五块）

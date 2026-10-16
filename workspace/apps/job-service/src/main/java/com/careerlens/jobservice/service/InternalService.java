@@ -3,7 +3,9 @@ package com.careerlens.jobservice.service;
 import com.careerlens.jobservice.client.AnalyzerClient;
 import com.careerlens.jobservice.config.constants.TraceConstants;
 import com.careerlens.jobservice.config.properties.AppProperties;
+import com.careerlens.jobservice.dto.response.AnalyzerCapabilitiesResponse;
 import com.careerlens.jobservice.dto.response.AnalyzerPingResponse;
+import com.careerlens.jobservice.dto.response.CapabilitiesResponse;
 import com.careerlens.jobservice.dto.response.PingResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -93,6 +95,27 @@ public class InternalService {
                     null,
                     null,
                     e.getClass().getSimpleName());
+        }
+    }
+
+    /**
+     * 能力探测：把 analyzer 的「能做什么」透传给上游，供前端决定是否放开 part3 的「深度」分析。
+     *
+     * <p><b>与 {@link #ping()} 同一容错取向</b>：analyzer 不可达时**不抛出**，
+     * 而是回报 {@code analyzerReachable=false} 且 {@code llmEnabled=false}。
+     * 能力未知时按「不可用」处理是唯一安全的方向 —— 猜成 available 会让前端
+     * 放开一个必然只能规则兜底的功能（用户会把兜底结果误认为 AI 产出）。
+     */
+    public CapabilitiesResponse capabilities() {
+        String traceId = MDC.get(TraceConstants.MDC_KEY);
+        log.info("capabilities probed");
+
+        try {
+            AnalyzerCapabilitiesResponse response = analyzerClient.capabilities(traceId);
+            return new CapabilitiesResponse(serviceName, true, response.llmEnabled(), null);
+        } catch (Exception e) {
+            log.warn("analyzer capabilities unreachable: {}", e.getMessage());
+            return new CapabilitiesResponse(serviceName, false, false, e.getClass().getSimpleName());
         }
     }
 }

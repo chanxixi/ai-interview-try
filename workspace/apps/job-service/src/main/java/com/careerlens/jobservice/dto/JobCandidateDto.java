@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 候选岗位 DTO —— Java 装配后下发给 Python（contracts/bff-java.yaml 的 {@code JobCandidateDto}）。
@@ -26,6 +27,22 @@ public class JobCandidateDto {
     /** 分类 code；仅作元数据回填，<b>不参与打分</b>（契约 R2 明确标注）。 */
     private String category;
     private List<RequirementDto> requirements = new ArrayList<>();
+
+    /**
+     * part3：维度权重档名（{@code campus} / {@code mid} / {@code senior}）。
+     *
+     * <p>由 {@link com.careerlens.jobservice.config.rubric.RubricWeightsProvider}
+     * 从岗位 {@code level} 归一而来。{@code null} = 没装配上 → Python 回退自己的默认档。
+     */
+    private String weightLevel;
+
+    /**
+     * part3：六维权重（键 = 维度 key，六维之和 = 1.0）。
+     *
+     * <p>{@code null} = 没装配上 → Python 回退自己的 {@code rubric.yaml}。
+     * <b>不看成一个错误</b>：rubric 缺失时整条分析链仍要能跑完（只少了画像的权重来源）。
+     */
+    private Map<String, Double> dimensionWeights;
 
     public JobCandidateDto() {
     }
@@ -76,5 +93,21 @@ public class JobCandidateDto {
 
     public void setRequirements(List<RequirementDto> requirements) {
         this.requirements = requirements;
+    }
+
+    public String getWeightLevel() {
+        return weightLevel;
+    }
+
+    public void setWeightLevel(String weightLevel) {
+        this.weightLevel = weightLevel;
+    }
+
+    public Map<String, Double> getDimensionWeights() {
+        return dimensionWeights;
+    }
+
+    public void setDimensionWeights(Map<String, Double> dimensionWeights) {
+        this.dimensionWeights = dimensionWeights;
     }
 }

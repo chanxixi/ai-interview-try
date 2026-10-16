@@ -494,6 +494,12 @@ body {
   font-size: 13px;
 }
 
+/* 与 `panel__note` 同尺寸，只换颜色：提示「某项能力当前不可用」，
+   不用 `el-alert` 是因为它是**常驻说明**而非需要关闭的错误。 */
+.panel__note--warn {
+  color: var(--warn);
+}
+
 .sub-title {
   margin: 18px 0 8px;
   font-size: 13.5px;
@@ -857,3 +863,260 @@ body {
   flex-wrap: wrap;
   gap: 6px;
 }
+
+/* ================================================================
+   part3：逐条判定 / 能力画像 / 改进建议（deep 模式）
+   ================================================================ */
+
+/* ---- 面板标题右侧的「AI 判定，仅供参考」标注 ---- */
+
+.verdict-panel__hint {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.verdict-panel__counts {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+/* ---- 逐条判定 ---- */
+
+.verdict-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+
+.verdict {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.verdict__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.verdict__skill {
+  font-weight: 650;
+  font-size: 14px;
+}
+
+.verdict__reason {
+  margin: 6px 0 0;
+  font-size: 13.5px;
+}
+
+.verdict__evidence {
+  margin-top: 6px;
+}
+
+.evidence-pairs {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  font-size: 13px;
+}
+
+.evidence-pairs dt {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.evidence-pairs dd {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.evidence-pairs__none {
+  color: var(--text-muted);
+}
+
+/* ---- 能力画像 ---- */
+
+.ability-panel__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .ability-panel__body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.ability-panel__canvas {
+  width: 100%;
+  height: 280px;
+}
+
+.ability-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+
+.ability {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.ability__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.ability__name {
+  font-weight: 600;
+  font-size: 13.5px;
+}
+
+.ability__score {
+  margin-left: auto;
+  color: var(--accent);
+  font-size: 17px;
+  font-weight: 700;
+}
+
+/* ★「无依据」不是 0 分：用中性灰 + 文字，绝不显示数字 0 */
+.ability__score--none {
+  color: var(--text-muted);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.ability__evidence {
+  margin: 4px 0 2px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+}
+
+.ability__evidence--none {
+  font-style: italic;
+}
+
+.ability__ref {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+/* ---- 改进建议 ---- */
+
+.advice-panel__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .advice-panel__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.advice-column__title {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.advice-list,
+.direction-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+
+.advice,
+.direction {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.advice__head,
+.direction__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.advice__action,
+.direction__why,
+.direction__step {
+  margin: 6px 0 0;
+  font-size: 13.5px;
+}
+
+.advice__evidence {
+  margin: 8px 0 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--border-strong);
+  border-radius: 0 6px 6px 0;
+  background: #fafbfc;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  white-space: pre-wrap;
+}
+
+.direction__rank {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  flex: none;
+}
+
+.direction__name {
+  font-weight: 650;
+  font-size: 14px;
+}
+
+.direction__step {
+  color: var(--text-muted);
+}
+
+/* ---- 上传面板：分析深度一行 ---- */
+
+.depth-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.depth-row__label {
+  font-size: 13px;
+}
+
+.depth-row__hint {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
